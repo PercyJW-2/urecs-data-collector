@@ -1,31 +1,12 @@
-use std::io::{Write};
-use std::net::{TcpStream, UdpSocket};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 use http_req::request::{Authentication, Method, Request};
 use http_req::uri::Uri;
-use serde::Deserialize;
-use anyhow::Result;
-
-pub(crate) type ShutdownFn = Box<dyn Fn()->Result<()> + Send + Sync>;
-pub(crate) type DataThread = thread::JoinHandle<()>;
-
-pub(crate) fn get_data_from_jetson(address: String, data_port: u16, control_port: u16) -> Result<(ShutdownFn, DataThread)> {
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", data_port))?;
-    socket.connect(format!("{}:{}", address, data_port))?;
-    let data_thread = thread::spawn(move || {
-
-    });
-    Ok((
-        Box::new(move || {
-            println!("Shutting down Jetson Interface");
-            let mut control_connection = TcpStream::connect(format!("{}:{}", address, control_port))?;
-            control_connection.write("stop\n".as_bytes())?;
-            Ok(())
-        }),
-        data_thread
-    ))
-}
+use serde::{Deserialize, Serialize};
+use crate::{DataThread, ShutdownFn};
 
 #[derive(Debug, Deserialize)]
 struct NodeJetson {
@@ -65,14 +46,27 @@ struct NodeJetson {
     baseboard_position: u8
 }
 
-pub(crate) fn get_data_from_firmware(address: String) -> Result<(ShutdownFn, DataThread)> {
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct FirmwareMeasurement {
+    measurement_time: usize,
+    voltage: f64,
+    power: f64,
+}
+
+pub(crate) fn get_data_from_firmware(address: String, path: PathBuf) -> anyhow::Result<(ShutdownFn, DataThread)> {
     // this is hideous, but I don't know a different option
     let uri_str: &'static str = format!("https://{}/REST/node/RCU_0_BB_1_1", address).leak();
     let uri = Uri::try_from(uri_str)?;
+
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+
+    let mut wtr = csv::Writer::from_path(path.join("firmware.csv"))?;
+
     let data_thread = thread::spawn(move || {
-        let mut last_voltage:f64 = 0.0;
-        let mut last_power:f64 = 0.0;
-        loop {
+        let mut last_sensor_update = 0;
+        while running.load(Ordering::Relaxed) {
             let mut body = Vec::new();
             let _ = Request::new(&uri)
                 .authentication(Authentication::basic("admin", "admin"))
@@ -80,17 +74,24 @@ pub(crate) fn get_data_from_firmware(address: String) -> Result<(ShutdownFn, Dat
                 .send(&mut body);
             let body = String::from_utf8_lossy(&body);
             let node: NodeJetson = quick_xml::de::from_str(&body).expect("Could not parse node XML");
-            if last_voltage != node.voltage || last_power != node.actual_power_usage { 
-                last_voltage = node.voltage;
-                last_power = node.actual_power_usage;
+            if last_sensor_update != node.last_sensor_update {
+                last_sensor_update = node.last_sensor_update;
+                wtr.serialize(FirmwareMeasurement {
+                    measurement_time: last_sensor_update,
+                    voltage: node.voltage,
+                    power: node.actual_power_usage,
+                }).expect("Could not write Firmware Measurement");
+                //TODO this is only for testing
                 println!("Measurement: {}V, {}mW", node.voltage, node.actual_power_usage);
             }
             thread::sleep(Duration::from_millis(100));
         }
+        wtr.flush().expect("Could not flush firmware data writer");
     });
     Ok((
         Box::new(move || {
             println!("Shutting down Firmware Interface");
+            running_clone.store(false, Ordering::Relaxed);
             Ok(())
         }),
         data_thread
