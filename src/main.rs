@@ -1,15 +1,16 @@
-mod network_jetson;
 mod network_firmware;
+mod network_firmware_fast;
+mod network_jetson;
 
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use clap::{Parser, Subcommand};
 use subenum::subenum;
-use anyhow::Result;
 
-pub(crate) type ShutdownFn = Box<dyn Fn()->Result<()> + Send + Sync>;
+pub(crate) type ShutdownFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
 pub(crate) type DataThread = thread::JoinHandle<()>;
 
 #[derive(Parser, Debug)]
@@ -34,8 +35,7 @@ enum Sources {
     },
     /// Reads data from the default u.RECS Firmware
     #[subenum(Firmware)]
-    Firmware {
-    },
+    Firmware {},
     /// Reads data from a minimal u.RECS Firmware focussing on fast ADC readouts
     #[subenum(Firmware)]
     FastFirmware {
@@ -49,9 +49,20 @@ impl FromStr for Jetson {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut splitted = s.split(",");
-        let data_port = splitted.next().ok_or("No value provided")?.parse::<u16>().or(Err("Could not parse number"))?;
-        let control_port = splitted.next().ok_or("No value provided")?.parse::<u16>().or(Err("Could not parse number"))?;
-        let result = Jetson::Jetson { data_port, control_port };
+        let data_port = splitted
+            .next()
+            .ok_or("No value provided")?
+            .parse::<u16>()
+            .or(Err("Could not parse number"))?;
+        let control_port = splitted
+            .next()
+            .ok_or("No value provided")?
+            .parse::<u16>()
+            .or(Err("Could not parse number"))?;
+        let result = Jetson::Jetson {
+            data_port,
+            control_port,
+        };
         Ok(result)
     }
 }
@@ -72,7 +83,7 @@ enum Commands {
         jetson_data: Jetson,
         #[clap(subcommand)]
         firmware_type: Firmware,
-    }
+    },
 }
 
 fn main() {
@@ -83,13 +94,18 @@ fn main() {
     let shutdown_funcs_hook = shutdown_funcs.clone();
     ctrlc::set_handler(move || {
         println!("Shutting down...");
-        for func in shutdown_funcs_hook.lock().expect("Failed to lock the shutdown hook").iter() {
+        for func in shutdown_funcs_hook
+            .lock()
+            .expect("Failed to lock the shutdown hook")
+            .iter()
+        {
             if let Err(err) = func() {
                 println!("Error: {}", err);
             }
         }
         println!("Finished shutdown.");
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
 
     println!("{:?}", args);
 
@@ -107,35 +123,80 @@ fn main() {
 
     let mut data_threads = Vec::new();
     match args.command {
-        Commands::Single { address, source } => {
-            match source {
-                Sources::Jetson { data_port, control_port } => {
-                    launch_jetson(&shutdown_funcs, &mut data_threads, address, data_port, control_port, path.to_path_buf());
-                },
-                Sources::Firmware {} => {
-                    launch_firmware(&shutdown_funcs, &mut data_threads, address, path.to_path_buf());
-                },
-                Sources::FastFirmware { data_port } => {
-
-                }
+        Commands::Single { address, source } => match source {
+            Sources::Jetson {
+                data_port,
+                control_port,
+            } => {
+                launch_jetson(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                    address,
+                    data_port,
+                    control_port,
+                    path.to_path_buf(),
+                );
+            }
+            Sources::Firmware {} => {
+                launch_firmware(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                    address,
+                    path.to_path_buf(),
+                );
+            }
+            Sources::FastFirmware { data_port } => {
+                launch_fast_firmware(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                    address,
+                    data_port,
+                    path.to_path_buf(),
+                );
             }
         },
-        Commands::Dual {urecs_address, jetson_address, jetson_data, firmware_type} => {
+        Commands::Dual {
+            urecs_address,
+            jetson_address,
+            jetson_data,
+            firmware_type,
+        } => {
             let jetson_data_port;
             let jetson_control_port;
             match jetson_data {
-                Jetson::Jetson { data_port, control_port } => {
+                Jetson::Jetson {
+                    data_port,
+                    control_port,
+                } => {
                     jetson_data_port = data_port;
                     jetson_control_port = control_port;
                 }
             }
-            launch_jetson(&shutdown_funcs, &mut data_threads, jetson_address, jetson_data_port, jetson_control_port, path.to_path_buf());
+            launch_jetson(
+                &shutdown_funcs,
+                &mut data_threads,
+                jetson_address,
+                jetson_data_port,
+                jetson_control_port,
+                path.to_path_buf(),
+            );
             match firmware_type {
                 Firmware::Firmware {} => {
-                    launch_firmware(&shutdown_funcs, &mut data_threads, urecs_address, path.to_path_buf());
-                },
+                    launch_firmware(
+                        &shutdown_funcs,
+                        &mut data_threads,
+                        urecs_address,
+                        path.to_path_buf(),
+                    );
+                }
                 Firmware::FastFirmware { data_port } => {
-
+                    launch_fast_firmware(
+                        &shutdown_funcs,
+                        &mut data_threads,
+                        urecs_address,
+                        data_port,
+                        path.to_path_buf(),
+                    );
                 }
             }
         }
@@ -145,10 +206,18 @@ fn main() {
     }
 }
 
-fn launch_firmware(shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>, data_threads: &mut Vec<DataThread>, address: String, path: PathBuf) {
+fn launch_firmware(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<DataThread>,
+    address: String,
+    path: PathBuf,
+) {
     match network_firmware::get_data_from_firmware(address, path) {
         Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs.lock().expect("Failed to lock the shutdown hook").push(shutdown_func);
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
             data_threads.push(data_thread);
         }
         Err(error) => {
@@ -157,12 +226,46 @@ fn launch_firmware(shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>, data_threads: &
     }
 }
 
-fn launch_jetson(shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>, data_threads: &mut Vec<DataThread>,
-                 jetson_address: String, jetson_data_port: u16, jetson_control_port: u16,
-                 path: PathBuf) {
-    match network_jetson::get_data_from_jetson(jetson_address, jetson_data_port, jetson_control_port, path) {
+fn launch_fast_firmware(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<DataThread>,
+    address: String,
+    port: u16,
+    path: PathBuf,
+) {
+    match network_firmware_fast::get_data_from_fast_firmware(address, port, path) {
         Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs.lock().expect("Failed to lock the shutdown hook").push(shutdown_func);
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
+            data_threads.push(data_thread);
+        }
+        Err(error) => {
+            println!("Failed to setup Fast firmware networking: {}", error);
+        }
+    }
+}
+
+fn launch_jetson(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<DataThread>,
+    jetson_address: String,
+    jetson_data_port: u16,
+    jetson_control_port: u16,
+    path: PathBuf,
+) {
+    match network_jetson::get_data_from_jetson(
+        jetson_address,
+        jetson_data_port,
+        jetson_control_port,
+        path,
+    ) {
+        Ok((shutdown_func, data_thread)) => {
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
             data_threads.push(data_thread);
         }
         Err(error) => {
