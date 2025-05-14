@@ -18,7 +18,7 @@ pub(crate) fn get_data_from_fast_firmware(
     data_port: u16,
     path: PathBuf,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", data_port))?;
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{}:{}", address, data_port))?;
 
     let running = Arc::new(AtomicBool::new(true));

@@ -22,7 +22,7 @@ pub(crate) fn get_data_from_jetson(
     control_port: u16,
     path: PathBuf,
 ) -> Result<(ShutdownFn, DataThread)> {
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", data_port))?;
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{}:{}", address, data_port))?;
 
     let running = Arc::new(AtomicBool::new(true));
@@ -41,7 +41,8 @@ pub(crate) fn get_data_from_jetson(
             }
             // This is a bit inefficient, but gives potential to work with the data in this program and gives slight verification
             let msg_string = String::from_utf8_lossy(&buf[..len]);
-            let mut iterator = msg_string.splitn(3, ',');
+            let mut iterator = msg_string.lines().next().expect("There should be at least one line")
+                .splitn(3, ',');
             wtr.serialize(JetsonMeasurement {
                 measurement_time: iterator
                     .next()
@@ -61,15 +62,16 @@ pub(crate) fn get_data_from_jetson(
             })
             .expect("Could not write Jetson measurement");
         }
+        println!("Flushing Jetson data writer");
         wtr.flush().expect("Can not flush Jetson data writer");
     });
     Ok((
         Box::new(move || {
             println!("Shutting down Jetson Interface");
+            running_clone.store(false, Ordering::Relaxed);
             let mut control_connection =
                 TcpStream::connect(format!("{}:{}", address, control_port))?;
             let _ = control_connection.write("stop\n".as_bytes())?;
-            running_clone.store(false, Ordering::Relaxed);
             Ok(())
         }),
         data_thread,
