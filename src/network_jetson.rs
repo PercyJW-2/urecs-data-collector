@@ -1,12 +1,11 @@
-use std::env::join_paths;
 use crate::{DataThread, ShutdownFn};
 use anyhow::Result;
 use serde::Serialize;
 use std::io::{ErrorKind, Write};
 use std::net::{TcpStream, UdpSocket};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
