@@ -1,12 +1,14 @@
+use std::env::join_paths;
 use crate::{DataThread, ShutdownFn};
 use anyhow::Result;
 use serde::Serialize;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::net::{TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -24,6 +26,7 @@ pub(crate) fn get_data_from_jetson(
 ) -> Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{}:{}", address, data_port))?;
+    socket.set_read_timeout(Some(Duration::from_secs(5)))?;
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
@@ -35,9 +38,25 @@ pub(crate) fn get_data_from_jetson(
     socket.send("go\n".as_bytes())?;
     let data_thread = thread::spawn(move || {
         while running.load(Ordering::Relaxed) {
-            let len = socket.recv(&mut buf).expect("Can not receive data");
-            if len == 0 || buf[len - 1] != b'\n' {
-                continue;
+            let len;
+            match socket.recv(&mut buf) {
+                Ok(length) => {
+                    len = length;
+                    if len == 0 || buf[len - 1] != b'\n' {
+                        continue;
+                    }
+                },
+                Err(err) => {
+                    match err.kind() {
+                        ErrorKind::TimedOut | ErrorKind::WouldBlock => {
+                            continue;
+                        }
+                        _ => {
+                            eprintln!("Error on receiving data: {:?}", err);
+                            break;
+                        }
+                    }
+                }
             }
             // This is a bit inefficient, but gives potential to work with the data in this program and gives slight verification
             let msg_string = String::from_utf8_lossy(&buf[..len]);
