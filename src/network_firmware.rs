@@ -1,12 +1,11 @@
 use crate::{DataThread, ShutdownFn};
-use http_req::request::{Authentication, Method, Request};
-use http_req::uri::Uri;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -25,10 +24,6 @@ struct NodeJetson {
     actual_power_usage: f64,
     #[serde(rename = "@state")]
     state: u8,
-    #[serde(rename = "@lastPowerState")]
-    last_power_state: u8,
-    #[serde(rename = "@defaultPowerState")]
-    default_power_state: u8,
     #[serde(rename = "@rcuId")]
     rcu_id: String,
     #[serde(rename = "@health")]
@@ -39,12 +34,6 @@ struct NodeJetson {
     id: String,
     #[serde(rename = "@present")]
     present: bool,
-    #[serde(rename = "@forceRecovery")]
-    force_recovery: bool,
-    #[serde(rename = "@jetsonType")]
-    jetson_type: String,
-    #[serde(rename = "@baseboardPosition")]
-    baseboard_position: u8,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,9 +48,12 @@ pub(crate) fn get_data_from_firmware(
     address: String,
     path: PathBuf,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
-    // this is hideous, but I don't know a different option
-    let uri_str: &'static str = format!("https://{}/REST/node/RCU_0_BB_1_1", address).leak();
-    let uri = Uri::try_from(uri_str)?;
+    let uri_string = format!("https://{}/REST/node/RCU_0_BB_1_1", address);
+
+    let client = reqwest::blocking::ClientBuilder::new()
+        // TODO change to accepting the used ca-cert
+        .danger_accept_invalid_certs(true)
+        .build()?;
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
@@ -71,12 +63,22 @@ pub(crate) fn get_data_from_firmware(
     let data_thread = thread::spawn(move || {
         let mut last_sensor_update = 0;
         while running.load(Ordering::Relaxed) {
-            let mut body = Vec::new();
-            let _ = Request::new(&uri)
-                .authentication(Authentication::basic("admin", "admin"))
-                .method(Method::GET)
-                .send(&mut body);
-            let body = String::from_utf8_lossy(&body);
+            let response = client.get(uri_string.as_str())
+                .basic_auth("admin", Some("admin"))
+                .send()
+                .expect("failed to send firmware update request");
+            if response.status().is_server_error() {
+                println!("Got server error: {}", response.status());
+                continue;
+            } else if response.status().is_client_error() {
+                println!("Got client error: {}", response.status());
+                continue;
+            } else if !response.status().is_success() {
+                println!("Got communication error: {}", response.status());
+                continue;
+            }
+            let response = response.bytes().expect("Failed to read response");
+            let body = String::from_utf8_lossy(response.trim_ascii());
             let node: NodeJetson =
                 quick_xml::de::from_str(&body).expect("Could not parse node XML");
             if last_sensor_update != node.last_sensor_update {
@@ -87,11 +89,6 @@ pub(crate) fn get_data_from_firmware(
                     power: node.actual_power_usage,
                 })
                 .expect("Could not write Firmware Measurement");
-                //TODO this is only for testing
-                println!(
-                    "Measurement: {}V, {}mW",
-                    node.voltage, node.actual_power_usage
-                );
             }
             thread::sleep(Duration::from_millis(100));
         }
