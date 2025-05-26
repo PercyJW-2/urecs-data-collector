@@ -82,6 +82,7 @@ pub(crate) fn get_data_from_jetson(
         }
         println!("Flushing Jetson data writer");
         wtr.flush().expect("Can not flush Jetson data writer");
+        println!("Jetson data writer is finished");
     });
     Ok((
         Box::new(move || {
@@ -90,6 +91,7 @@ pub(crate) fn get_data_from_jetson(
             let mut control_connection =
                 TcpStream::connect(format!("{}:{}", address, control_port))?;
             let _ = control_connection.write("stop\n".as_bytes())?;
+            println!("Waiting for Data-Writer");
             Ok(())
         }),
         data_thread,
