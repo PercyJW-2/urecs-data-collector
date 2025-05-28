@@ -3,9 +3,8 @@ mod network_firmware_fast;
 mod network_jetson;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use bpaf::Bpaf;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use subenum::subenum;
@@ -13,21 +12,26 @@ use subenum::subenum;
 pub(crate) type ShutdownFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
 pub(crate) type DataThread = thread::JoinHandle<()>;
 
-#[derive(Parser, Debug)]
+#[derive(Bpaf, Debug, Clone)]
+#[bpaf(options)]
 struct Arguments {
     /// All generated csv files are stored at the provided location.
     /// If not provided, the current folder will be used.
     storage_path: Option<String>,
-    #[clap(subcommand)]
-    command: Commands,
+    /// First input source to be recorded
+    #[bpaf(external, many)]
+    sources: Vec<Sources>,
 }
 
 #[subenum(Firmware, Jetson)]
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Bpaf, Debug, Clone)]
 enum Sources {
     /// Reads data from Jetson using (tegrastats-net)[https://gitlab.ub.uni-bielefeld.de/jwachsmuth/tegrastats-net]
     #[subenum(Jetson)]
+    #[bpaf(command, adjacent)]
     Jetson {
+        /// Network Address of the Jetson
+        address: String,
         /// Port on which Data is received
         data_port: u16,
         /// Port on which the Data transmission is stopped
@@ -35,59 +39,24 @@ enum Sources {
     },
     /// Reads data from the default u.RECS Firmware
     #[subenum(Firmware)]
-    Firmware {},
+    #[bpaf(command, adjacent)]
+    Firmware {
+        /// Network Address of the u.RECS
+        address: String,
+    },
     /// Reads data from a minimal u.RECS Firmware focussing on fast ADC readouts
     #[subenum(Firmware)]
+    #[bpaf(command, adjacent)]
     FastFirmware {
+        /// Network Address of the u.RECS
+        address: String,
         /// Port on which Data is received
         data_port: u16,
     },
 }
 
-impl FromStr for Jetson {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut splitted = s.split(",");
-        let data_port = splitted
-            .next()
-            .ok_or("No value provided")?
-            .parse::<u16>()
-            .or(Err("Could not parse number"))?;
-        let control_port = splitted
-            .next()
-            .ok_or("No value provided")?
-            .parse::<u16>()
-            .or(Err("Could not parse number"))?;
-        let result = Jetson::Jetson {
-            data_port,
-            control_port,
-        };
-        Ok(result)
-    }
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Reads from a Single Source
-    Single {
-        address: String,
-        #[clap(subcommand)]
-        source: Sources,
-    },
-    /// Reads from Jetson and one Firmware-type
-    Dual {
-        urecs_address: String,
-        jetson_address: String,
-        /// Jetson Specific data. Provide each value separated by ','
-        jetson_data: Jetson,
-        #[clap(subcommand)]
-        firmware_type: Firmware,
-    },
-}
-
 fn main() {
-    let args = Arguments::parse();
+    let args = arguments().run();
 
     // initialize shutdown function
     let shutdown_funcs = Arc::new(Mutex::new(Vec::<ShutdownFn>::new()));
@@ -120,87 +89,56 @@ fn main() {
         println!("Path {} is not a directory", path.display());
         return;
     }
+    
+    // check if defined sources are valid
+    let mut jetson_count = 0;
+    let mut firmware_count = 0;
+    for source in &args.sources {
+        if let Ok(_) = Jetson::try_from(source.clone()) {
+            jetson_count += 1;
+        } else if let Ok(_) = Firmware::try_from(source.clone()) { 
+            firmware_count += 1;
+        }
+    }
+    if jetson_count > 1 || firmware_count > 1 {
+        println!("The proposed measurement configuration is not possible");
+        return;
+    }
 
+    // start data acquisition
     let mut data_threads = Vec::new();
-    match args.command {
-        Commands::Single { address, source } => match source {
-            Sources::Jetson {
-                data_port,
-                control_port,
-            } => {
+    for source in args.sources {
+        match source {
+            Sources::Jetson { address, data_port, control_port } => {
                 launch_jetson(
                     &shutdown_funcs,
                     &mut data_threads,
                     address,
                     data_port,
                     control_port,
-                    path.to_path_buf(),
+                    path.to_path_buf()
                 );
             }
-            Sources::Firmware {} => {
+            Sources::Firmware { address } => {
                 launch_firmware(
                     &shutdown_funcs,
                     &mut data_threads,
                     address,
-                    path.to_path_buf(),
+                    path.to_path_buf()
                 );
             }
-            Sources::FastFirmware { data_port } => {
+            Sources::FastFirmware { address, data_port } => {
                 launch_fast_firmware(
                     &shutdown_funcs,
                     &mut data_threads,
                     address,
                     data_port,
-                    path.to_path_buf(),
+                    path.to_path_buf()
                 );
-            }
-        },
-        Commands::Dual {
-            urecs_address,
-            jetson_address,
-            jetson_data,
-            firmware_type,
-        } => {
-            let jetson_data_port;
-            let jetson_control_port;
-            match jetson_data {
-                Jetson::Jetson {
-                    data_port,
-                    control_port,
-                } => {
-                    jetson_data_port = data_port;
-                    jetson_control_port = control_port;
-                }
-            }
-            launch_jetson(
-                &shutdown_funcs,
-                &mut data_threads,
-                jetson_address,
-                jetson_data_port,
-                jetson_control_port,
-                path.to_path_buf(),
-            );
-            match firmware_type {
-                Firmware::Firmware {} => {
-                    launch_firmware(
-                        &shutdown_funcs,
-                        &mut data_threads,
-                        urecs_address,
-                        path.to_path_buf(),
-                    );
-                }
-                Firmware::FastFirmware { data_port } => {
-                    launch_fast_firmware(
-                        &shutdown_funcs,
-                        &mut data_threads,
-                        urecs_address,
-                        data_port,
-                        path.to_path_buf(),
-                    );
-                }
             }
         }
     }
+    
     for data_thread in data_threads {
         data_thread.join().expect("DataThread join failed");
     }

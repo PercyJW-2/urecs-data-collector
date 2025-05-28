@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
