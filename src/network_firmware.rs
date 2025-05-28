@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+use crate::utils::is_response_valid;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -66,18 +67,11 @@ pub(crate) fn get_data_from_firmware(
                 .basic_auth("admin", Some("admin"))
                 .send()
                 .expect("failed to send firmware update request");
-            if response.status().is_server_error() {
-                println!("Got server error: {}", response.status());
-                continue;
-            } else if response.status().is_client_error() {
-                println!("Got client error: {}", response.status());
-                continue;
-            } else if !response.status().is_success() {
-                println!("Got communication error: {}", response.status());
+            if is_response_valid(&response) {
                 continue;
             }
             let response = response.bytes().expect("Failed to read response");
-            let body = String::from_utf8_lossy(response.trim_ascii());
+            let body = String::from_utf8_lossy(&*response);
             let node: NodeJetson =
                 quick_xml::de::from_str(&body).expect("Could not parse node XML");
             if last_sensor_update != node.last_sensor_update {

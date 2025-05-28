@@ -1,12 +1,15 @@
 mod network_firmware;
 mod network_firmware_fast;
 mod network_jetson;
+mod network_shelly_plug;
+mod utils;
 
 use anyhow::Result;
 use bpaf::Bpaf;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::thread::JoinHandle;
 use subenum::subenum;
 
 pub(crate) type ShutdownFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
@@ -17,13 +20,14 @@ pub(crate) type DataThread = thread::JoinHandle<()>;
 struct Arguments {
     /// All generated csv files are stored at the provided location.
     /// If not provided, the current folder will be used.
+    #[bpaf(short, long)]
     storage_path: Option<String>,
     /// First input source to be recorded
     #[bpaf(external, many)]
     sources: Vec<Sources>,
 }
 
-#[subenum(Firmware, Jetson)]
+#[subenum(Firmware, Jetson, ShellyPlug)]
 #[derive(Bpaf, Debug, Clone)]
 enum Sources {
     /// Reads data from Jetson using (tegrastats-net)[https://gitlab.ub.uni-bielefeld.de/jwachsmuth/tegrastats-net]
@@ -31,10 +35,13 @@ enum Sources {
     #[bpaf(command, adjacent)]
     Jetson {
         /// Network Address of the Jetson
+        #[bpaf(short, long)]
         address: String,
         /// Port on which Data is received
+        #[bpaf(short, long)]
         data_port: u16,
         /// Port on which the Data transmission is stopped
+        #[bpaf(short, long)]
         control_port: u16,
     },
     /// Reads data from the default u.RECS Firmware
@@ -42,6 +49,7 @@ enum Sources {
     #[bpaf(command, adjacent)]
     Firmware {
         /// Network Address of the u.RECS
+        #[bpaf(short, long)]
         address: String,
     },
     /// Reads data from a minimal u.RECS Firmware focussing on fast ADC readouts
@@ -49,9 +57,19 @@ enum Sources {
     #[bpaf(command, adjacent)]
     FastFirmware {
         /// Network Address of the u.RECS
+        #[bpaf(short, long)]
         address: String,
         /// Port on which Data is received
+        #[bpaf(short, long)]
         data_port: u16,
+    },
+    /// Reads data from a Shelly PlusPlugS
+    #[subenum(ShellyPlug)]
+    #[bpaf(command, adjacent)]
+    ShellyPlug {
+        /// Network Address of the Shelly Plug
+        #[bpaf(short, long)]
+        address: String,
     },
 }
 
@@ -89,18 +107,21 @@ fn main() {
         println!("Path {} is not a directory", path.display());
         return;
     }
-    
+
     // check if defined sources are valid
     let mut jetson_count = 0;
     let mut firmware_count = 0;
+    let mut shelly_plug_count = 0;
     for source in &args.sources {
         if let Ok(_) = Jetson::try_from(source.clone()) {
             jetson_count += 1;
-        } else if let Ok(_) = Firmware::try_from(source.clone()) { 
+        } else if let Ok(_) = Firmware::try_from(source.clone()) {
             firmware_count += 1;
+        } else if let Ok(_) = ShellyPlug::try_from(source.clone()) {
+            shelly_plug_count += 1;
         }
     }
-    if jetson_count > 1 || firmware_count > 1 {
+    if jetson_count > 1 || firmware_count > 1 || shelly_plug_count > 1 {
         println!("The proposed measurement configuration is not possible");
         return;
     }
@@ -136,11 +157,39 @@ fn main() {
                     path.to_path_buf()
                 );
             }
+            Sources::ShellyPlug { address } => {
+                launch_shelly_plug(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                    address,
+                    path.to_path_buf()
+                )
+            }
         }
     }
-    
+
     for data_thread in data_threads {
         data_thread.join().expect("DataThread join failed");
+    }
+}
+
+fn launch_shelly_plug(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<JoinHandle<()>>,
+    address: String,
+    path: PathBuf
+) {
+    match network_shelly_plug::get_data_from_shelly(address, path) {
+        Ok((shutdown_func, data_thread)) => {
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
+            data_threads.push(data_thread);
+        }
+        Err(err) => {
+            println!("Failed to setup shelly plug: {}", err);
+        }
     }
 }
 
