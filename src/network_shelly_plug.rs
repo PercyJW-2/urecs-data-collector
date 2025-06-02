@@ -25,6 +25,8 @@ struct SwitchStatus {
 #[allow(dead_code)]
 struct Aenergy {
     total: f32,
+    by_minute: [f32; 3],
+    minute_ts: u64
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,7 +102,7 @@ pub(crate) fn get_data_from_shelly(
 }
 
 fn reset_shelly_plug_reading(address: String, client: &reqwest::blocking::Client) {
-    let uri_string = format!("http://{}/rpc/Switch.ResetCounters?id=0&type=[\"aenergy\",\"ret_aenergy\"]", address);
+    let uri_string = format!("http://{}/rpc/Switch.ResetCounters?id=0", address);
     client.get(uri_string.as_str())
         .send()
         .expect("failed to send plug status reset");
