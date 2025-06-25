@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, thread};
 use std::time::{Duration, Instant};
-use reqwest::blocking::Response;
 use serde::{Deserialize, Serialize};
 use crate::{DataThread, ShutdownFn};
 use crate::utils::is_response_valid;
@@ -61,7 +60,7 @@ pub(crate) fn get_data_from_shelly(
 
     let mut wtr = csv::Writer::from_path(path.join("shellyPlug.csv"))?;
 
-    let data_thread = thread::spawn(move || {
+    let data_thread = thread::spawn(move || -> anyhow::Result<()> {
         reset_shelly_plug_reading(address, &client);
         let mut last_consumed_energy: f32 = 0.0;
         let measurement_start = Instant::now();
@@ -89,6 +88,7 @@ pub(crate) fn get_data_from_shelly(
         wtr.flush().expect("Could not flush firmware data writer");
         fs::write(path.join("shellyFinalPower.txt"), last_consumed_energy.to_string())
             .expect("failed to write last consumed energy file");
+        Ok(())
     });
 
     Ok((

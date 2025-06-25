@@ -60,7 +60,7 @@ pub(crate) fn get_data_from_firmware(
 
     let mut wtr = csv::Writer::from_path(path.join("firmware.csv"))?;
 
-    let data_thread = thread::spawn(move || {
+    let data_thread = thread::spawn(move || -> anyhow::Result<()> {
         let mut last_sensor_update = 0;
         while running.load(Ordering::Relaxed) {
             let response = client.get(uri_string.as_str())
@@ -86,6 +86,7 @@ pub(crate) fn get_data_from_firmware(
             thread::sleep(Duration::from_millis(100));
         }
         wtr.flush().expect("Could not flush firmware data writer");
+        Ok(())
     });
     Ok((
         Box::new(move || {

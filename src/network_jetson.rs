@@ -35,7 +35,7 @@ pub(crate) fn get_data_from_jetson(
     let mut buf = [b' '; 512];
     // starting datastream
     socket.send("go\n".as_bytes())?;
-    let data_thread = thread::spawn(move || {
+    let data_thread = thread::spawn(move || -> Result<()> {
         while running.load(Ordering::Relaxed) {
             let len;
             match socket.recv(&mut buf) {
@@ -51,8 +51,7 @@ pub(crate) fn get_data_from_jetson(
                             continue;
                         }
                         _ => {
-                            eprintln!("Error on receiving data: {:?}", err);
-                            break;
+                            return Err(anyhow::format_err!(err));
                         }
                     }
                 }
@@ -65,24 +64,21 @@ pub(crate) fn get_data_from_jetson(
                 measurement_time: iterator
                     .next()
                     .expect("Received no data")
-                    .parse()
-                    .expect("Invalid Format"),
+                    .parse()?,
                 current: iterator
                     .next()
                     .expect("Received no current")
-                    .parse()
-                    .expect("Invalid Format"),
+                    .parse()?,
                 voltage: iterator
                     .next()
                     .expect("Received no voltage")
-                    .parse()
-                    .expect("Invalid Format"),
-            })
-            .expect("Could not write Jetson measurement");
+                    .parse()?,
+            })?;
         }
         println!("Flushing Jetson data writer");
-        wtr.flush().expect("Can not flush Jetson data writer");
+        wtr.flush()?;
         println!("Jetson data writer is finished");
+        Ok(())
     });
     Ok((
         Box::new(move || {

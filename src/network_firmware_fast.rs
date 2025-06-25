@@ -32,7 +32,7 @@ pub(crate) fn get_data_from_fast_firmware(
     let mut buf = [b' '; 4096];
     // starting datastream
     socket.send("go\n".as_bytes())?;
-    let data_thread = thread::spawn(move || {
+    let data_thread = thread::spawn(move || -> anyhow::Result<()> {
         while running.load(Ordering::Relaxed) {
             let len;
             match socket.recv(&mut buf) {
@@ -73,6 +73,7 @@ pub(crate) fn get_data_from_fast_firmware(
         println!("Flushing Fast Firmware data writer");
         wtr.flush()
             .expect("Can not flush Fast Firmware data writer");
+        Ok(())
     });
     Ok((
         Box::new(move || {

@@ -5,16 +5,15 @@ mod network_shelly_plug;
 mod utils;
 mod visa_osc_communication;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bpaf::Bpaf;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::thread::JoinHandle;
 use subenum::subenum;
 
 pub(crate) type ShutdownFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
-pub(crate) type DataThread = thread::JoinHandle<()>;
+pub(crate) type DataThread = JoinHandle<Result<()>>;
 
 #[derive(Bpaf, Debug, Clone)]
 #[bpaf(options)]
@@ -28,7 +27,7 @@ struct Arguments {
     sources: Vec<Sources>,
 }
 
-#[subenum(Firmware, Jetson, ShellyPlug)]
+#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope)]
 #[derive(Bpaf, Debug, Clone)]
 enum Sources {
     /// Reads data from Jetson using (tegrastats-net)[https://gitlab.ub.uni-bielefeld.de/jwachsmuth/tegrastats-net]
@@ -72,9 +71,15 @@ enum Sources {
         #[bpaf(short, long)]
         address: String,
     },
+    /// Reads data from an Oscilloscope
+    #[subenum(Oscilloscope)]
+    #[bpaf(command, adjacent)]
+    Oscilloscope {
+        
+    }
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args = arguments().run();
 
     // initialize shutdown function
@@ -101,18 +106,17 @@ fn main() {
     let path = args.storage_path.unwrap_or_else(|| "./".to_string());
     let path = std::path::Path::new(&path);
     if !path.exists() {
-        println!("Path {} does not exist", path.display());
-        return;
+        return Err(anyhow!("Path {} does not exist", path.display()));
     }
     if !path.is_dir() {
-        println!("Path {} is not a directory", path.display());
-        return;
+        return Err(anyhow!("Path {} is not a directory", path.display()));
     }
 
     // check if defined sources are valid
     let mut jetson_count = 0;
     let mut firmware_count = 0;
     let mut shelly_plug_count = 0;
+    let mut oscilloscope_count = 0;
     for source in &args.sources {
         if let Ok(_) = Jetson::try_from(source.clone()) {
             jetson_count += 1;
@@ -120,11 +124,12 @@ fn main() {
             firmware_count += 1;
         } else if let Ok(_) = ShellyPlug::try_from(source.clone()) {
             shelly_plug_count += 1;
+        } else if let Ok(_) = Oscilloscope::try_from(source.clone()) {
+            oscilloscope_count += 1;
         }
     }
-    if jetson_count > 1 || firmware_count > 1 || shelly_plug_count > 1 {
-        println!("The proposed measurement configuration is not possible");
-        return;
+    if jetson_count > 1 || firmware_count > 1 || shelly_plug_count > 1 || oscilloscope_count > 1 {
+        return Err(anyhow!("The proposed measurement configuration is not possible"));
     }
 
     // start data acquisition
@@ -166,17 +171,43 @@ fn main() {
                     path.to_path_buf()
                 )
             }
+            Sources::Oscilloscope {} => {
+                //TODO this is very temporay
+                launch_oscilloscope(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                )
+            }
         }
     }
 
     for data_thread in data_threads {
-        data_thread.join().expect("DataThread join failed");
+        data_thread.join().expect("DataThread join failed")?;
+    }
+    Ok(())
+}
+
+fn launch_oscilloscope(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<DataThread>,
+) {
+    match visa_osc_communication::get_data_from_osc() {
+        Ok((shutdown_func, data_thread)) => {
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
+            data_threads.push(data_thread);
+        }
+        Err(error) => {
+            println!("Failed to setup Oscilloscope networking: {}", error);
+        }
     }
 }
 
 fn launch_shelly_plug(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<JoinHandle<()>>,
+    data_threads: &mut Vec<DataThread>,
     address: String,
     path: PathBuf
 ) {
