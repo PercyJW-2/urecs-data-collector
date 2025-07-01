@@ -176,6 +176,7 @@ fn main() -> Result<()> {
                 launch_oscilloscope(
                     &shutdown_funcs,
                     &mut data_threads,
+                    path.to_path_buf()
                 )
             }
         }
@@ -190,8 +191,9 @@ fn main() -> Result<()> {
 fn launch_oscilloscope(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
+    path_buf: PathBuf
 ) {
-    match visa_osc_communication::get_data_from_osc() {
+    match visa_osc_communication::get_data_from_osc(path_buf) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()

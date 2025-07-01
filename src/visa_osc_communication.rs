@@ -2,6 +2,7 @@ use crate::{DataThread, ShutdownFn};
 use anyhow::Result;
 use std::ffi::CString;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread;
@@ -36,9 +37,11 @@ fn setup_osc() -> Result<(Instrument, DefaultRM)> {
     Ok((dev, rm))
 }
 
-pub(crate) fn get_data_from_osc() -> Result<(ShutdownFn, DataThread)> {
+pub(crate) fn get_data_from_osc(path: PathBuf) -> Result<(ShutdownFn, DataThread)> {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
+
+    let mut wtr = csv::Writer::from_path(path.join("osc_data.csv"))?;
     
     let data_thread = thread::spawn(move || -> Result<()> {
         let (mut dev, _rm) = setup_osc()?;
@@ -49,12 +52,29 @@ pub(crate) fn get_data_from_osc() -> Result<(ShutdownFn, DataThread)> {
         while running.load(std::sync::atomic::Ordering::Relaxed) {
             //let result = instrument.write_read_inst_bin(b"CURve?\n")?;
             let result = instrument.read_bin()?;
-            let combined = result.chunks_exact(2).map(|chunk| {
-                u16::from_le_bytes([chunk[0], chunk[1]])
-            }).collect::<Vec<u16>>();
+            let read_duration = last_time.elapsed()?.as_micros();
             last_time = SystemTime::now();
+            println!("Read delay: {}", read_duration/1000);
+            result
+                .chunks_exact(2)
+                .map(|chunk| {
+                    u16::from_le_bytes([chunk[0], chunk[1]])
+                })
+                .enumerate()
+                .map(|(i, v)| {
+                    OscMeasurement {
+                        measurement_time: ((read_duration)/READ_AMOUNT as u128) * i as u128,
+                        raw_value: v,
+                    }
+                })
+                .for_each(|measurement| {
+                    wtr.serialize(measurement).unwrap();
+                });
         }
         instrument.write_inst(b"WFMpre?\n")?;
+        println!("Flushing Oscilloscope data writer");
+        wtr.flush()?;
+        println!("Oscilloscope data writer is finished");
         Ok(())
     });
     
@@ -77,7 +97,7 @@ struct InstrumentWrapper<'inst> {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct OscMeasurement {
-    measurement_time: usize,
+    measurement_time: u128,
     raw_value: u16
 }
 
