@@ -2,12 +2,14 @@ use crate::{DataThread, ShutdownFn};
 use anyhow::Result;
 use std::ffi::CString;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::num::Wrapping;
+use std::ops::{Div, Sub};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::SystemTime;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use visa_rs::enums::status::ErrorCode;
 use visa_rs::flags::AccessMode;
 use visa_rs::{io_to_vs_err, AsResourceManager, DefaultRM, Error, Instrument, TIMEOUT_IMMEDIATE};
@@ -47,31 +49,28 @@ pub(crate) fn get_data_from_osc(path: PathBuf) -> Result<(ShutdownFn, DataThread
         let (mut dev, _rm) = setup_osc()?;
         let mut instrument = InstrumentWrapper::new(&mut dev)?;
         instrument.initialize()?;
-        let mut last_time = SystemTime::now();
+        let last_time = SystemTime::now();
+        let mut duration = 0;
         instrument.write_inst(b"CURVEStream?\n")?;
         while running.load(std::sync::atomic::Ordering::Relaxed) {
             //let result = instrument.write_read_inst_bin(b"CURve?\n")?;
             let result = instrument.read_bin()?;
-            let read_duration = last_time.elapsed()?.as_micros();
-            last_time = SystemTime::now();
-            println!("Read delay: {}", read_duration/1000);
-            result
+            let read_duration = last_time.elapsed()?.as_millis() - duration;
+            duration = last_time.elapsed()?.as_nanos();
+            println!("Read delay: {}", read_duration);
+            let converted_res = result
                 .chunks_exact(2)
                 .map(|chunk| {
-                    u16::from_le_bytes([chunk[0], chunk[1]])
+                    Wrapping(u16::from_le_bytes([chunk[0], chunk[1]])).sub(Wrapping(0u16).sub(Wrapping(1u16)).div(Wrapping(2u16))).0
                 })
-                .enumerate()
-                .map(|(i, v)| {
-                    OscMeasurement {
-                        measurement_time: ((read_duration)/READ_AMOUNT as u128) * i as u128,
-                        raw_value: v,
-                    }
-                })
-                .for_each(|measurement| {
-                    wtr.serialize(measurement).unwrap();
-                });
+                .collect::<Vec<u16>>();
+            wtr.serialize(OscMeasurement {
+                measurement_time: read_duration + duration,
+                raw_value: converted_res,
+            })?
         }
         instrument.write_inst(b"WFMpre?\n")?;
+        instrument.write_inst(b"DISplay:WAVEform ON\n")?;
         println!("Flushing Oscilloscope data writer");
         wtr.flush()?;
         println!("Oscilloscope data writer is finished");
@@ -98,7 +97,7 @@ struct InstrumentWrapper<'inst> {
 #[serde(rename_all = "PascalCase")]
 struct OscMeasurement {
     measurement_time: u128,
-    raw_value: u16
+    raw_value: Vec<u16>
 }
 
 impl<'inst> InstrumentWrapper<'inst> {
@@ -120,17 +119,18 @@ impl<'inst> InstrumentWrapper<'inst> {
 
         // initialize instrument TODO: discuss settings commands without * can be seperated by ; symbols
         let setup_commands = [
-            b"DATA INIT\n".as_slice(),
+            //b"DATA INIT\n".as_slice(),
             b"DATA SNAP\n".as_slice(),
-            b"DATA:START 1;STOP 10000\n",
-            b"DATA:ENCDG FAS\n",
+            //b"DATA:START 1;STOP 10000\n",
+            b"DATA:ENCDG SRIbinary\n",
             b"DATA:WID 2\n",
             b"DATA:RESO FULL\n",
             b"DATA:SOU CH1\n",
+            b"DISplay:WAVEform OFF\n",
         ];
 
-        //self.write_inst_list(setup_commands.as_slice())?;
-        self.write_inst(b"DATA:WID 2\n")?;
+        self.write_inst_list(setup_commands.as_slice())?;
+        //self.write_inst(b"DATA:WID 2\n")?;
         print!("{}", self.write_read_inst(b"DATa?\n")?);
         print!("{}", self.write_read_inst(b"WFMpre?\n")?);
         Ok(())
