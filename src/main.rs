@@ -4,6 +4,7 @@ mod network_jetson;
 mod network_shelly_plug;
 mod utils;
 mod visa_osc_communication;
+mod pico_osc_communication;
 
 use anyhow::{anyhow, Result};
 use bpaf::Bpaf;
