@@ -1,11 +1,13 @@
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::AtomicBool;
 use std::thread;
+use std::time::Instant;
 use pico_sdk::prelude::*;
 use anyhow::Result;
 use crossbeam_channel::Receiver;
+use serde::Serialize;
 use crate::{ShutdownFn, DataThread};
 
 pub(crate) fn get_data_from_usb_osc(path: PathBuf, rx: Receiver<()>) -> Result<(ShutdownFn, DataThread)> {
@@ -13,7 +15,7 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, rx: Receiver<()>) -> Result<(
     let running_clone = running.clone();
 
     let wtr_handler = CSVHandler::new(path.join("usb_osc_data.csv"), PicoChannel::A)?;
-    let instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler))?;
+    let mut instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler))?;
 
     let data_thread = thread::spawn(move || -> Result<()> {
 
@@ -63,8 +65,9 @@ impl USBInstrumentWrapper {
         })
     }
 
-    fn start(&self, sample_rate: u32) -> Result<()> {
+    fn start(&mut self, sample_rate: u32) -> Result<()> {
         self.stream_device.start(sample_rate)?;
+        self._csv_handler.start();
         Ok(())
     }
 
@@ -73,32 +76,52 @@ impl USBInstrumentWrapper {
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct UsbOscMeasurement {
+    measurement_timestamp: u128,
+    sample_index: usize,
+    measurement: i16
+}
+
 struct CSVHandler {
-    csv_writer: csv::Writer<File>,
+    csv_writer: Mutex<csv::Writer<File>>,
     channel: PicoChannel,
+    start_time: Mutex<Instant>,
 }
 
 impl CSVHandler {
     fn new(path: PathBuf, channel: PicoChannel) -> Result<Self> {
         let wtr = csv::Writer::from_path(path)?;
         Ok(Self {
-            csv_writer: wtr,
+            csv_writer: Mutex::new(wtr),
             channel,
+            start_time: Mutex::new(Instant::now())
         })
+    }
+
+    fn start(&self) {
+        let mut start_time_lock = self.start_time.lock().expect("Could not lock the mutex");
+        *start_time_lock = Instant::now();
     }
 }
 
 impl NewDataHandler for CSVHandler {
     fn handle_event(&self, value: &StreamingEvent) {
-        for sample in &value.channels[&self.channel].samples {
-
-        };
-        todo!()
+        let current_time = self.start_time.lock().expect("Could not lock the mutex").elapsed();
+        let mut wtr_lock = self.csv_writer.lock().expect("Could not lock the mutex");
+        let _ = &value.channels[&self.channel].samples.iter().enumerate().for_each(|(idx, sample)| {
+            wtr_lock.serialize(UsbOscMeasurement {
+                measurement_timestamp: current_time.as_micros(),
+                measurement: *sample,
+                sample_index: idx
+            }).expect("Could not serialize event");
+        });
     }
 }
 
 impl Drop for CSVHandler {
     fn drop(&mut self) {
-        self.csv_writer.flush().unwrap();
+        self.csv_writer.lock().expect("could not acquire lock").flush().unwrap();
     }
 }
