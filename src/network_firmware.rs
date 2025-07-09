@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+use crossbeam_channel::Receiver;
 use crate::utils::is_response_valid;
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +48,7 @@ struct FirmwareMeasurement {
 pub(crate) fn get_data_from_firmware(
     address: String,
     path: PathBuf,
+    rx: Receiver<()>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let uri_string = format!("https://{}/REST/node/RCU_0_BB_1_1", address);
 
@@ -61,6 +63,8 @@ pub(crate) fn get_data_from_firmware(
     let mut wtr = csv::Writer::from_path(path.join("firmware.csv"))?;
 
     let data_thread = thread::spawn(move || -> anyhow::Result<()> {
+        rx.recv().expect("Could not receive from channel");
+        
         let mut last_sensor_update = 0;
         while running.load(Ordering::Relaxed) {
             let response = client.get(uri_string.as_str())

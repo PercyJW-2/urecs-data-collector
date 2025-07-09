@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::SystemTime;
+use crossbeam_channel::Receiver;
 use serde::{Serialize, Serializer};
 use visa_rs::enums::status::ErrorCode;
 use visa_rs::flags::AccessMode;
@@ -39,7 +40,7 @@ fn setup_osc() -> Result<(Instrument, DefaultRM)> {
     Ok((dev, rm))
 }
 
-pub(crate) fn get_data_from_osc(path: PathBuf) -> Result<(ShutdownFn, DataThread)> {
+pub(crate) fn get_data_from_osc(path: PathBuf, rx: Receiver<()>) -> Result<(ShutdownFn, DataThread)> {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
@@ -51,6 +52,7 @@ pub(crate) fn get_data_from_osc(path: PathBuf) -> Result<(ShutdownFn, DataThread
         instrument.initialize()?;
         let last_time = SystemTime::now();
         let mut duration = 0;
+        rx.recv().expect("Could not receive from channel");
         instrument.write_inst(b"CURVEStream?\n")?;
         while running.load(std::sync::atomic::Ordering::Relaxed) {
             //let result = instrument.write_read_inst_bin(b"CURve?\n")?;

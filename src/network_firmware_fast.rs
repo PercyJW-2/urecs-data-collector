@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+use crossbeam_channel::Receiver;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -19,6 +20,7 @@ pub(crate) fn get_data_from_fast_firmware(
     address: String,
     data_port: u16,
     path: PathBuf,
+    rx: Receiver<()>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{}:{}", address, data_port))?;
@@ -30,9 +32,11 @@ pub(crate) fn get_data_from_fast_firmware(
     let mut wtr = csv::Writer::from_path(path.join("fast_firmware.csv"))?;
 
     let mut buf = [b' '; 4096];
-    // starting datastream
-    socket.send("go\n".as_bytes())?;
     let data_thread = thread::spawn(move || -> anyhow::Result<()> {
+        rx.recv().expect("Could not receive from channel");
+        
+        // starting datastream
+        socket.send("go\n".as_bytes())?;
         while running.load(Ordering::Relaxed) {
             let len;
             match socket.recv(&mut buf) {

@@ -11,6 +11,7 @@ use bpaf::Bpaf;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use crossbeam_channel::{unbounded, Receiver};
 use subenum::subenum;
 
 pub(crate) type ShutdownFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
@@ -28,7 +29,7 @@ struct Arguments {
     sources: Vec<Sources>,
 }
 
-#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope)]
+#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope, UsbOscilloscope)]
 #[derive(Bpaf, Debug, Clone)]
 enum Sources {
     /// Reads data from Jetson using (tegrastats-net)[https://gitlab.ub.uni-bielefeld.de/jwachsmuth/tegrastats-net]
@@ -73,10 +74,15 @@ enum Sources {
         address: String,
     },
     /// Reads data from an Oscilloscope
+    /// This doesn't work properly
     #[subenum(Oscilloscope)]
     #[bpaf(command, adjacent)]
     Oscilloscope {
-        
+    },
+    /// Reads data from USB Oscilloscope
+    #[subenum(UsbOscilloscope)]
+    #[bpaf(command, adjacent)]
+    UsbOscilloscope {
     }
 }
 
@@ -118,6 +124,7 @@ fn main() -> Result<()> {
     let mut firmware_count = 0;
     let mut shelly_plug_count = 0;
     let mut oscilloscope_count = 0;
+    let mut usb_oscilloscope_count = 0;
     for source in &args.sources {
         if let Ok(_) = Jetson::try_from(source.clone()) {
             jetson_count += 1;
@@ -127,14 +134,21 @@ fn main() -> Result<()> {
             shelly_plug_count += 1;
         } else if let Ok(_) = Oscilloscope::try_from(source.clone()) {
             oscilloscope_count += 1;
+        } else if let Ok(_) = UsbOscilloscope::try_from(source.clone()) {
+            usb_oscilloscope_count += 1;
         }
     }
-    if jetson_count > 1 || firmware_count > 1 || shelly_plug_count > 1 || oscilloscope_count > 1 {
+    if jetson_count > 1
+        || firmware_count > 1
+        || shelly_plug_count > 1
+        || oscilloscope_count > 1
+        || usb_oscilloscope_count > 1 {
         return Err(anyhow!("The proposed measurement configuration is not possible"));
     }
 
     // start data acquisition
     let mut data_threads = Vec::new();
+    let (tx, rx) = unbounded();
     for source in args.sources {
         match source {
             Sources::Jetson { address, data_port, control_port } => {
@@ -144,7 +158,8 @@ fn main() -> Result<()> {
                     address,
                     data_port,
                     control_port,
-                    path.to_path_buf()
+                    path.to_path_buf(),
+                    rx.clone()
                 );
             }
             Sources::Firmware { address } => {
@@ -152,7 +167,8 @@ fn main() -> Result<()> {
                     &shutdown_funcs,
                     &mut data_threads,
                     address,
-                    path.to_path_buf()
+                    path.to_path_buf(),
+                    rx.clone()
                 );
             }
             Sources::FastFirmware { address, data_port } => {
@@ -161,7 +177,8 @@ fn main() -> Result<()> {
                     &mut data_threads,
                     address,
                     data_port,
-                    path.to_path_buf()
+                    path.to_path_buf(),
+                    rx.clone()
                 );
             }
             Sources::ShellyPlug { address } => {
@@ -169,19 +186,30 @@ fn main() -> Result<()> {
                     &shutdown_funcs,
                     &mut data_threads,
                     address,
-                    path.to_path_buf()
+                    path.to_path_buf(),
+                    rx.clone()
                 )
             }
             Sources::Oscilloscope {} => {
-                //TODO this is very temporay
                 launch_oscilloscope(
                     &shutdown_funcs,
                     &mut data_threads,
-                    path.to_path_buf()
+                    path.to_path_buf(),
+                    rx.clone()
+                )
+            }
+            Sources::UsbOscilloscope {} => {
+                launch_usb_oscilloscope(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                    path.to_path_buf(),
+                    rx.clone()
                 )
             }
         }
     }
+
+    tx.send(()).expect("Could not start threads");
 
     for data_thread in data_threads {
         data_thread.join().expect("DataThread join failed")?;
@@ -189,12 +217,13 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn launch_oscilloscope(
+fn launch_usb_oscilloscope(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    path_buf: PathBuf
+    data_threads: &mut Vec<JoinHandle<Result<()>>>,
+    path: PathBuf,
+    rx: Receiver<()>
 ) {
-    match visa_osc_communication::get_data_from_osc(path_buf) {
+    match pico_osc_communication::get_data_from_usb_osc(path, rx) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
@@ -203,7 +232,27 @@ fn launch_oscilloscope(
             data_threads.push(data_thread);
         }
         Err(error) => {
-            println!("Failed to setup Oscilloscope networking: {}", error);
+            println!("Failed to setup USB Oscilloscope: {}", error);
+        }
+    }
+}
+
+fn launch_oscilloscope(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<DataThread>,
+    path_buf: PathBuf,
+    rx: Receiver<()>
+) {
+    match visa_osc_communication::get_data_from_osc(path_buf, rx) {
+        Ok((shutdown_func, data_thread)) => {
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
+            data_threads.push(data_thread);
+        }
+        Err(error) => {
+            println!("Failed to setup Oscilloscope: {}", error);
         }
     }
 }
@@ -212,9 +261,10 @@ fn launch_shelly_plug(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
     address: String,
-    path: PathBuf
+    path: PathBuf,
+    rx: Receiver<()>
 ) {
-    match network_shelly_plug::get_data_from_shelly(address, path) {
+    match network_shelly_plug::get_data_from_shelly(address, path, rx) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
@@ -233,8 +283,9 @@ fn launch_firmware(
     data_threads: &mut Vec<DataThread>,
     address: String,
     path: PathBuf,
+    rx: Receiver<()>
 ) {
-    match network_firmware::get_data_from_firmware(address, path) {
+    match network_firmware::get_data_from_firmware(address, path, rx) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
@@ -254,8 +305,9 @@ fn launch_fast_firmware(
     address: String,
     port: u16,
     path: PathBuf,
+    rx: Receiver<()>
 ) {
-    match network_firmware_fast::get_data_from_fast_firmware(address, port, path) {
+    match network_firmware_fast::get_data_from_fast_firmware(address, port, path, rx) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
@@ -276,12 +328,14 @@ fn launch_jetson(
     jetson_data_port: u16,
     jetson_control_port: u16,
     path: PathBuf,
+    rx: Receiver<()>
 ) {
     match network_jetson::get_data_from_jetson(
         jetson_address,
         jetson_data_port,
         jetson_control_port,
         path,
+        rx
     ) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs

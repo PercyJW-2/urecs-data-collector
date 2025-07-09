@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use crossbeam_channel::Receiver;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -22,6 +23,7 @@ pub(crate) fn get_data_from_jetson(
     data_port: u16,
     control_port: u16,
     path: PathBuf,
+    rx: Receiver<()>
 ) -> Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{}:{}", address, data_port))?;
@@ -33,9 +35,11 @@ pub(crate) fn get_data_from_jetson(
     let mut wtr = csv::Writer::from_path(path.join("jetson.csv"))?;
 
     let mut buf = [b' '; 512];
-    // starting datastream
-    socket.send("go\n".as_bytes())?;
     let data_thread = thread::spawn(move || -> Result<()> {
+        rx.recv().expect("Could not receive from channel");
+
+        // starting datastream
+        socket.send("go\n".as_bytes())?;
         while running.load(Ordering::Relaxed) {
             let len;
             match socket.recv(&mut buf) {

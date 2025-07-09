@@ -5,9 +5,10 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use pico_sdk::prelude::*;
 use anyhow::Result;
+use crossbeam_channel::Receiver;
 use crate::{ShutdownFn, DataThread};
 
-pub(crate) fn get_data_from_usb_osc(path: PathBuf) -> Result<(ShutdownFn, DataThread)> {
+pub(crate) fn get_data_from_usb_osc(path: PathBuf, rx: Receiver<()>) -> Result<(ShutdownFn, DataThread)> {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
@@ -15,6 +16,9 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf) -> Result<(ShutdownFn, DataTh
     let instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler))?;
 
     let data_thread = thread::spawn(move || -> Result<()> {
+
+        rx.recv().expect("Could not receive from channel");
+
         instrument_wrapper.start(1_000)?;
         while running.load(std::sync::atomic::Ordering::Relaxed) {
             thread::sleep(std::time::Duration::from_millis(10));
@@ -34,7 +38,7 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf) -> Result<(ShutdownFn, DataTh
 }
 
 struct USBInstrumentWrapper {
-    csv_handler: Arc<CSVHandler>,
+    _csv_handler: Arc<CSVHandler>,
     stream_device: PicoStreamingDevice
 }
 
@@ -54,7 +58,7 @@ impl USBInstrumentWrapper {
         stream_device.new_data.subscribe(csv_handler.clone());
 
         Ok(Self {
-            csv_handler,
+            _csv_handler: csv_handler,
             stream_device,
         })
     }

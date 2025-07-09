@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, thread};
 use std::time::{Duration, Instant};
+use crossbeam_channel::Receiver;
 use serde::{Deserialize, Serialize};
 use crate::{DataThread, ShutdownFn};
 use crate::utils::is_response_valid;
@@ -49,6 +50,7 @@ struct ShellyPlugMeasurement {
 pub(crate) fn get_data_from_shelly(
     address: String,
     path: PathBuf,
+    rx: Receiver<()>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let uri_string = format!("http://{}/rpc/Switch.GetStatus?id=0", address);
 
@@ -61,6 +63,7 @@ pub(crate) fn get_data_from_shelly(
     let mut wtr = csv::Writer::from_path(path.join("shellyPlug.csv"))?;
 
     let data_thread = thread::spawn(move || -> anyhow::Result<()> {
+        rx.recv().expect("Could not receive from channel");
         reset_shelly_plug_reading(address, &client);
         let mut last_consumed_energy: f32 = 0.0;
         let measurement_start = Instant::now();
