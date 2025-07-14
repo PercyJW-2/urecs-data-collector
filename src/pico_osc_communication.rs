@@ -14,7 +14,7 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, rx: Receiver<()>) -> Result<(
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
-    let wtr_handler = CSVHandler::new(path.join("usb_osc_data.csv"), PicoChannel::A)?;
+    let wtr_handler = CSVHandler::new(path.join("usb_osc_data.csv"))?;
     let mut instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler))?;
 
     let data_thread = thread::spawn(move || -> Result<()> {
@@ -56,7 +56,8 @@ impl USBInstrumentWrapper {
         let device = enum_device.open()?;
         let stream_device = device.into_streaming_device();
 
-        stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_2V, PicoCoupling::AC);
+        stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_10V, PicoCoupling::DC);
+        stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_10V, PicoCoupling::DC);
         stream_device.new_data.subscribe(csv_handler.clone());
 
         Ok(Self {
@@ -81,21 +82,20 @@ impl USBInstrumentWrapper {
 struct UsbOscMeasurement {
     measurement_timestamp: u128,
     sample_index: usize,
-    measurement: i16
+    measurement_a: i16,
+    measurement_b: i16,
 }
 
 struct CSVHandler {
     csv_writer: Mutex<csv::Writer<File>>,
-    channel: PicoChannel,
     start_time: Mutex<Instant>,
 }
 
 impl CSVHandler {
-    fn new(path: PathBuf, channel: PicoChannel) -> Result<Self> {
+    fn new(path: PathBuf) -> Result<Self> {
         let wtr = csv::Writer::from_path(path)?;
         Ok(Self {
             csv_writer: Mutex::new(wtr),
-            channel,
             start_time: Mutex::new(Instant::now())
         })
     }
@@ -110,12 +110,15 @@ impl NewDataHandler for CSVHandler {
     fn handle_event(&self, value: &StreamingEvent) {
         let current_time = self.start_time.lock().expect("Could not lock the mutex").elapsed();
         let mut wtr_lock = self.csv_writer.lock().expect("Could not lock the mutex");
-        let _ = &value.channels[&self.channel].samples.iter().enumerate().for_each(|(idx, sample)| {
+        let channel_a_data = &value.channels[&PicoChannel::A].samples;
+        let channel_b_data = &value.channels[&PicoChannel::B].samples;
+        let _ = channel_a_data.iter().zip(channel_b_data.iter()).enumerate().for_each(|(idx, (channel_a, channel_b))| {
             wtr_lock.serialize(UsbOscMeasurement {
                 measurement_timestamp: current_time.as_micros(),
-                measurement: *sample,
-                sample_index: idx
-            }).expect("Could not serialize event");
+                sample_index: idx,
+                measurement_a: *channel_a,
+                measurement_b: *channel_b,
+            }).expect("Could not serialize USB Osc measurement");
         });
     }
 }
