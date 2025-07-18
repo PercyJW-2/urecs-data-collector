@@ -75,7 +75,7 @@ pub(crate) fn get_data_from_firmware(
                 continue;
             }
             let response = response.bytes().expect("Failed to read response");
-            let body = String::from_utf8_lossy(&*response);
+            let body = String::from_utf8_lossy(&response);
             let node: NodeJetson =
                 quick_xml::de::from_str(&body).expect("Could not parse node XML");
             if last_sensor_update != node.last_sensor_update {

@@ -52,7 +52,7 @@ pub(crate) fn get_data_from_shelly(
     path: PathBuf,
     rx: Receiver<()>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
-    let uri_string = format!("http://{}/rpc/Switch.GetStatus?id=0", address);
+    let uri_string = format!("http://{address}/rpc/Switch.GetStatus?id=0");
 
     let client = reqwest::blocking::ClientBuilder::new()
         .build()?;
@@ -105,7 +105,7 @@ pub(crate) fn get_data_from_shelly(
 }
 
 fn reset_shelly_plug_reading(address: String, client: &reqwest::blocking::Client) {
-    let uri_string = format!("http://{}/rpc/Switch.ResetCounters?id=0", address);
+    let uri_string = format!("http://{address}/rpc/Switch.ResetCounters?id=0");
     client.get(uri_string.as_str())
         .send()
         .expect("failed to send plug status reset");

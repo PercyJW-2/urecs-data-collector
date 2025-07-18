@@ -52,7 +52,7 @@ pub(crate) fn get_data_from_fast_firmware(
                             continue;
                         }
                         _ => {
-                            eprintln!("Error on receiving data: {}", err);
+                            eprintln!("Error on receiving data: {err}");
                             break;
                         }
                     }

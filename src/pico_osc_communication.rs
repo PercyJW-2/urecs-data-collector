@@ -112,7 +112,7 @@ impl NewDataHandler for CSVHandler {
         let mut wtr_lock = self.csv_writer.lock().expect("Could not lock the mutex");
         let channel_a_data = &value.channels[&PicoChannel::A].samples;
         let channel_b_data = &value.channels[&PicoChannel::B].samples;
-        let _ = channel_a_data.iter().zip(channel_b_data.iter()).enumerate().for_each(|(idx, (channel_a, channel_b))| {
+        channel_a_data.iter().zip(channel_b_data.iter()).enumerate().for_each(|(idx, (channel_a, channel_b))| {
             wtr_lock.serialize(UsbOscMeasurement {
                 measurement_timestamp: current_time.as_micros(),
                 sample_index: idx,

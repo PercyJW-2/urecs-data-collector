@@ -26,7 +26,7 @@ pub(crate) fn get_data_from_jetson(
     rx: Receiver<()>
 ) -> Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect(format!("{}:{}", address, data_port))?;
+    socket.connect(format!("{address}:{data_port}"))?;
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
 
     let running = Arc::new(AtomicBool::new(true));
@@ -89,7 +89,7 @@ pub(crate) fn get_data_from_jetson(
             println!("Shutting down Jetson Interface");
             running_clone.store(false, Ordering::Relaxed);
             let mut control_connection =
-                TcpStream::connect(format!("{}:{}", address, control_port))?;
+                TcpStream::connect(format!("{address}:{control_port}"))?;
             let _ = control_connection.write("stop\n".as_bytes())?;
             println!("Waiting for Data-Writer");
             Ok(())
