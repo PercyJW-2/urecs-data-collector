@@ -50,7 +50,7 @@ pub(crate) fn get_data_from_firmware(
     path: PathBuf,
     rx: Receiver<()>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
-    let uri_string = format!("https://{}/REST/node/RCU_0_BB_1_1", address);
+    let uri_string = format!("https://{address}/REST/node/RCU_0_BB_1_1");
 
     let client = reqwest::blocking::ClientBuilder::new()
         // TODO change to accepting the used ca-cert

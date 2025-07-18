@@ -23,7 +23,7 @@ pub(crate) fn get_data_from_fast_firmware(
     rx: Receiver<()>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect(format!("{}:{}", address, data_port))?;
+    socket.connect(format!("{address}:{data_port}"))?;
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
 
     let running = Arc::new(AtomicBool::new(true));

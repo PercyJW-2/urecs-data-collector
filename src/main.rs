@@ -3,6 +3,7 @@ mod network_firmware_fast;
 mod network_jetson;
 mod network_shelly_plug;
 mod utils;
+#[cfg(feature = "visa")]
 mod visa_osc_communication;
 mod pico_osc_communication;
 
@@ -100,14 +101,14 @@ fn main() -> Result<()> {
             .iter()
         {
             if let Err(err) = func() {
-                println!("Error: {}", err);
+                println!("Error: {err}");
             }
         }
         println!("Finished shutdown.");
     })
     .expect("Error setting Ctrl-C handler");
 
-    println!("{:?}", args);
+    println!("{args:?}");
 
     // determine storage folder
     let path = args.storage_path.unwrap_or_else(|| "./".to_string());
@@ -126,15 +127,15 @@ fn main() -> Result<()> {
     let mut oscilloscope_count = 0;
     let mut usb_oscilloscope_count = 0;
     for source in &args.sources {
-        if let Ok(_) = Jetson::try_from(source.clone()) {
+        if Jetson::try_from(source.clone()).is_ok() {
             jetson_count += 1;
-        } else if let Ok(_) = Firmware::try_from(source.clone()) {
+        } else if Firmware::try_from(source.clone()).is_ok() {
             firmware_count += 1;
-        } else if let Ok(_) = ShellyPlug::try_from(source.clone()) {
+        } else if ShellyPlug::try_from(source.clone()).is_ok() {
             shelly_plug_count += 1;
-        } else if let Ok(_) = Oscilloscope::try_from(source.clone()) {
+        } else if Oscilloscope::try_from(source.clone()).is_ok() {
             oscilloscope_count += 1;
-        } else if let Ok(_) = UsbOscilloscope::try_from(source.clone()) {
+        } else if UsbOscilloscope::try_from(source.clone()).is_ok() {
             usb_oscilloscope_count += 1;
         }
     }
@@ -232,7 +233,7 @@ fn launch_usb_oscilloscope(
             data_threads.push(data_thread);
         }
         Err(error) => {
-            println!("Failed to setup USB Oscilloscope: {}", error);
+            println!("Failed to setup USB Oscilloscope: {error}");
         }
     }
 }
@@ -243,6 +244,7 @@ fn launch_oscilloscope(
     path_buf: PathBuf,
     rx: Receiver<()>
 ) {
+    #[cfg(feature = "visa")]
     match visa_osc_communication::get_data_from_osc(path_buf, rx) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
@@ -252,9 +254,11 @@ fn launch_oscilloscope(
             data_threads.push(data_thread);
         }
         Err(error) => {
-            println!("Failed to setup Oscilloscope: {}", error);
+            println!("Failed to set up Oscilloscope: {}", error);
         }
     }
+    #[cfg(not(feature = "visa"))]
+    println!("Visa feature is not compiled, to use this please recompile it with `--features visa`.");
 }
 
 fn launch_shelly_plug(
@@ -273,7 +277,7 @@ fn launch_shelly_plug(
             data_threads.push(data_thread);
         }
         Err(err) => {
-            println!("Failed to setup shelly plug: {}", err);
+            println!("Failed to set up shelly plug: {err}");
         }
     }
 }
@@ -294,7 +298,7 @@ fn launch_firmware(
             data_threads.push(data_thread);
         }
         Err(error) => {
-            println!("Failed to setup Firmware networking: {}", error);
+            println!("Failed to set up Firmware networking: {error}");
         }
     }
 }
@@ -316,7 +320,7 @@ fn launch_fast_firmware(
             data_threads.push(data_thread);
         }
         Err(error) => {
-            println!("Failed to setup Fast firmware networking: {}", error);
+            println!("Failed to set up Fast firmware networking: {error}");
         }
     }
 }
@@ -345,7 +349,7 @@ fn launch_jetson(
             data_threads.push(data_thread);
         }
         Err(error) => {
-            println!("Failed to setup Jetson networking: {}", error);
+            println!("Failed to set up Jetson networking: {error}");
         }
     }
 }
