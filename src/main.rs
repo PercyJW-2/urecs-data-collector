@@ -210,6 +210,7 @@ fn main() -> Result<()> {
         }
     }
 
+    println!("Starting measurement");
     tx.send(()).expect("Could not start threads");
 
     for data_thread in data_threads {
@@ -238,13 +239,13 @@ fn launch_usb_oscilloscope(
     }
 }
 
+#[cfg(feature = "visa")]
 fn launch_oscilloscope(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
     path_buf: PathBuf,
     rx: Receiver<()>
 ) {
-    #[cfg(feature = "visa")]
     match visa_osc_communication::get_data_from_osc(path_buf, rx) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
@@ -257,7 +258,15 @@ fn launch_oscilloscope(
             println!("Failed to set up Oscilloscope: {}", error);
         }
     }
-    #[cfg(not(feature = "visa"))]
+}
+
+#[cfg(not(feature = "visa"))]
+fn launch_oscilloscope(
+    _shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    _data_threads: &mut Vec<DataThread>,
+    _path_buf: PathBuf,
+    _rx: Receiver<()>
+) {
     println!("Visa feature is not compiled, to use this please recompile it with `--features visa`.");
 }
 

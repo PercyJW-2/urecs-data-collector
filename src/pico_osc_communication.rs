@@ -56,8 +56,8 @@ impl USBInstrumentWrapper {
         let device = enum_device.open()?;
         let stream_device = device.into_streaming_device();
 
-        stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_10V, PicoCoupling::DC);
-        stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_5V, PicoCoupling::DC);
+        stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_5V, PicoCoupling::DC);
+        stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_20V, PicoCoupling::DC);
         stream_device.new_data.subscribe(csv_handler.clone());
 
         Ok(Self {
@@ -82,8 +82,8 @@ impl USBInstrumentWrapper {
 struct UsbOscMeasurement {
     measurement_timestamp: u128,
     sample_index: usize,
-    voltage: f32,
-    current: f32,
+    voltage: f64,
+    current: f64,
 }
 
 struct CSVHandler {
@@ -116,8 +116,8 @@ impl NewDataHandler for CSVHandler {
             wtr_lock.serialize(UsbOscMeasurement {
                 measurement_timestamp: current_time.as_micros(),
                 sample_index: idx,
-                voltage: *channel_a as f32 * (10.0/i16::MAX as f32),
-                current: (*channel_b as f32 * (5.0/i16::MAX as f32)) / 100.0,
+                current: (*channel_a as f64 * (5.0/i16::MAX as f64)) / 1000.0,
+                voltage: *channel_b as f64 * -(20.0/i16::MAX as f64),
             }).expect("Could not serialize USB Osc measurement");
         });
     }
