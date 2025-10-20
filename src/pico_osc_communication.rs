@@ -119,7 +119,7 @@ impl NewDataHandler for CSVHandler {
                 measurement_timestamp: current_time.as_micros(),
                 sample_index: idx,
                 current: *channel_a, // value can be used directly, as 1V algins to 1A
-                voltage: *channel_b,
+                voltage: -*channel_b, // voltage needs to be negated, as it is measured reversely
             }).expect("Could not serialize USB Osc measurement");
         });
     }
