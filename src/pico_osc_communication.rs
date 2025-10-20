@@ -21,8 +21,8 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, rx: Receiver<()>) -> Result<(
 
         rx.recv().expect("Could not receive from channel");
 
-        //instrument_wrapper.start(50_000_000)?;
-        instrument_wrapper.start(1_000)?;
+        instrument_wrapper.start(50_000_000)?;
+        //instrument_wrapper.start(1_000)?;
         while running.load(std::sync::atomic::Ordering::Relaxed) {
             thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -114,7 +114,7 @@ impl NewDataHandler for CSVHandler {
         let channel_a_data = &value.channels[&PicoChannel::A].scale_samples();
         let channel_b_data = &value.channels[&PicoChannel::B].scale_samples();
         channel_a_data.iter().zip(channel_b_data.iter()).enumerate().for_each(|(idx, (channel_a, channel_b))| {
-            println!("{}", *channel_b);
+            //println!("{}", *channel_b);
             wtr_lock.serialize(UsbOscMeasurement {
                 measurement_timestamp: current_time.as_micros(),
                 sample_index: idx,
