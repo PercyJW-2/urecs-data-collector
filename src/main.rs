@@ -98,7 +98,10 @@ enum Sources {
 }
 
 fn main() -> Result<()> {
-    simple_logger::SimpleLogger::new().env().init()?;
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Info)
+        .env()
+        .init()?;
 
     let args = arguments().run();
 
