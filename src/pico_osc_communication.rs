@@ -21,8 +21,8 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>) 
 
         while !read_start.load(Ordering::Acquire) {}
 
-        //instrument_wrapper.start(50_000_000)?;
-        instrument_wrapper.start(1_000)?;
+        instrument_wrapper.start(50_000_000)?;
+        //instrument_wrapper.start(1_000)?;
         while running.load(std::sync::atomic::Ordering::Relaxed) {
             thread::sleep(std::time::Duration::from_millis(10));
         }
