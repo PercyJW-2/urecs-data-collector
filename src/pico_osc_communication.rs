@@ -1,33 +1,34 @@
-use crate::{DataThread, ShutdownFn};
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 use anyhow::Result;
-use crossbeam_channel::Receiver;
 use pico_sdk::prelude::*;
 use serde::Serialize;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
+use log::info;
 
-pub(crate) fn get_data_from_usb_osc(path: PathBuf, rx: Receiver<()>) -> Result<(ShutdownFn, DataThread)> {
+pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>) -> Result<(ShutdownFn, DataThread)> {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
     let wtr_handler = CSVHandler::new(path.join("usb_osc_data.csv"))?;
     let mut instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler))?;
 
-    let data_thread = thread::spawn(move || -> Result<()> {
+    let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
 
-        rx.recv().expect("Could not receive from channel");
+        while read_start.load(Ordering::Acquire) {}
 
-        instrument_wrapper.start(50_000_000)?;
-        //instrument_wrapper.start(1_000)?;
+        //instrument_wrapper.start(50_000_000)?;
+        instrument_wrapper.start(1_000)?;
         while running.load(std::sync::atomic::Ordering::Relaxed) {
             thread::sleep(std::time::Duration::from_millis(10));
         }
         instrument_wrapper.stop();
-        Ok(())
+        info!("Finishing Thread");
+        Ok(DataThreadReturnVal::Instrument(instrument_wrapper))
     });
 
     Ok((
@@ -40,8 +41,8 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, rx: Receiver<()>) -> Result<(
     ))
 }
 
-struct USBInstrumentWrapper {
-    _csv_handler: Arc<CSVHandler>,
+pub(crate) struct USBInstrumentWrapper {
+    pub(crate) csv_handler: Arc<CSVHandler>,
     stream_device: PicoStreamingDevice
 }
 
@@ -62,14 +63,14 @@ impl USBInstrumentWrapper {
         stream_device.new_data.subscribe(csv_handler.clone());
 
         Ok(Self {
-            _csv_handler: csv_handler,
+            csv_handler: csv_handler,
             stream_device,
         })
     }
 
     fn start(&mut self, sample_rate: u32) -> Result<()> {
         self.stream_device.start(sample_rate)?;
-        self._csv_handler.start();
+        self.csv_handler.start();
         Ok(())
     }
 
@@ -87,8 +88,8 @@ struct UsbOscMeasurement {
     current: f64,
 }
 
-struct CSVHandler {
-    csv_writer: Mutex<csv::Writer<File>>,
+pub(crate) struct CSVHandler {
+    pub(crate) csv_writer: Mutex<csv::Writer<File>>,
     start_time: Mutex<Instant>,
 }
 
@@ -122,11 +123,5 @@ impl NewDataHandler for CSVHandler {
                 voltage: -*channel_b, // voltage needs to be negated, as it is measured reversely
             }).expect("Could not serialize USB Osc measurement");
         });
-    }
-}
-
-impl Drop for CSVHandler {
-    fn drop(&mut self) {
-        self.csv_writer.lock().expect("could not acquire lock").flush().unwrap();
     }
 }

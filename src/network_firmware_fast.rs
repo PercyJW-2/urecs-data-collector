@@ -1,5 +1,5 @@
 use std::io::ErrorKind;
-use crate::{DataThread, ShutdownFn};
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 use serde::Serialize;
 use std::net::UdpSocket;
 use std::path::PathBuf;
@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use crossbeam_channel::Receiver;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -20,7 +19,7 @@ pub(crate) fn get_data_from_fast_firmware(
     address: String,
     data_port: u16,
     path: PathBuf,
-    rx: Receiver<()>
+    read_start: Arc<AtomicBool>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{address}:{data_port}"))?;
@@ -32,8 +31,8 @@ pub(crate) fn get_data_from_fast_firmware(
     let mut wtr = csv::Writer::from_path(path.join("fast_firmware.csv"))?;
 
     let mut buf = [b' '; 4096];
-    let data_thread = thread::spawn(move || -> anyhow::Result<()> {
-        rx.recv().expect("Could not receive from channel");
+    let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
+        while read_start.load(Ordering::Acquire) {}
         
         // starting datastream
         socket.send("go\n".as_bytes())?;
@@ -52,7 +51,7 @@ pub(crate) fn get_data_from_fast_firmware(
                             continue;
                         }
                         _ => {
-                            eprintln!("Error on receiving data: {err}");
+                            log::error!("Error on receiving data: {err}");
                             break;
                         }
                     }
@@ -74,14 +73,12 @@ pub(crate) fn get_data_from_fast_firmware(
                 .expect("Could not write Fast Firmware measurement");
             }
         }
-        println!("Flushing Fast Firmware data writer");
-        wtr.flush()
-            .expect("Can not flush Fast Firmware data writer");
-        Ok(())
+        log::info!("Finishing thread");
+        Ok(DataThreadReturnVal::CsvWriter(wtr))
     });
     Ok((
         Box::new(move || {
-            println!("Shutting down Fast Firmware Interface");
+            log::info!("Shutting down Fast Firmware Interface");
             running_cloned.store(false, Ordering::Relaxed);
             Ok(())
         }),

@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fs, thread};
+use std::thread;
 use std::time::{Duration, Instant};
-use crossbeam_channel::Receiver;
 use serde::{Deserialize, Serialize};
-use crate::{DataThread, ShutdownFn};
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 use crate::utils::is_response_valid;
 
 #[derive(Debug, Deserialize)]
@@ -50,7 +49,7 @@ struct ShellyPlugMeasurement {
 pub(crate) fn get_data_from_shelly(
     address: String,
     path: PathBuf,
-    rx: Receiver<()>
+    read_start: Arc<AtomicBool>,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let uri_string = format!("http://{address}/rpc/Switch.GetStatus?id=0");
 
@@ -62,8 +61,8 @@ pub(crate) fn get_data_from_shelly(
 
     let mut wtr = csv::Writer::from_path(path.join("shellyPlug.csv"))?;
 
-    let data_thread = thread::spawn(move || -> anyhow::Result<()> {
-        rx.recv().expect("Could not receive from channel");
+    let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
+        while !read_start.load(Ordering::Acquire) {}
         reset_shelly_plug_reading(address, &client);
         let mut last_consumed_energy: f32 = 0.0;
         let measurement_start = Instant::now();
@@ -88,15 +87,17 @@ pub(crate) fn get_data_from_shelly(
 
             thread::sleep(Duration::from_millis(100));
         }
-        wtr.flush().expect("Could not flush firmware data writer");
-        fs::write(path.join("shellyFinalPower.txt"), last_consumed_energy.to_string())
-            .expect("failed to write last consumed energy file");
-        Ok(())
+        log::info!("Finishing Thread");
+        Ok(DataThreadReturnVal::WriterAndExtraFile((
+            wtr,
+            path.join("shellyFinalPower.txt"),
+            last_consumed_energy.to_string())
+        ))
     });
 
     Ok((
         Box::new(move || {
-            println!("Shutting down Shelly Plug Interface");
+            log::info!("Shutting down Shelly Plug Interface");
             running_clone.store(false, Ordering::Relaxed);
             Ok(())
         }),

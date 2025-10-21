@@ -1,11 +1,10 @@
-use crate::{DataThread, ShutdownFn};
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use crossbeam_channel::Receiver;
 use crate::utils::is_response_valid;
 
 #[derive(Debug, Deserialize)]
@@ -48,7 +47,7 @@ struct FirmwareMeasurement {
 pub(crate) fn get_data_from_firmware(
     address: String,
     path: PathBuf,
-    rx: Receiver<()>
+    read_start: Arc<AtomicBool>
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let uri_string = format!("https://{address}/REST/node/RCU_0_BB_1_1");
 
@@ -62,8 +61,8 @@ pub(crate) fn get_data_from_firmware(
 
     let mut wtr = csv::Writer::from_path(path.join("firmware.csv"))?;
 
-    let data_thread = thread::spawn(move || -> anyhow::Result<()> {
-        rx.recv().expect("Could not receive from channel");
+    let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
+        while read_start.load(Ordering::Acquire) {}
         
         let mut last_sensor_update = 0;
         while running.load(Ordering::Relaxed) {
@@ -89,12 +88,12 @@ pub(crate) fn get_data_from_firmware(
             }
             thread::sleep(Duration::from_millis(100));
         }
-        wtr.flush().expect("Could not flush firmware data writer");
-        Ok(())
+        log::info!("Finishing thread");
+        Ok(DataThreadReturnVal::CsvWriter(wtr))
     });
     Ok((
         Box::new(move || {
-            println!("Shutting down Firmware Interface");
+            log::info!("Shutting down Firmware Interface");
             running_clone.store(false, Ordering::Relaxed);
             Ok(())
         }),

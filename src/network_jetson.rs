@@ -1,4 +1,4 @@
-use crate::{DataThread, ShutdownFn};
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 use anyhow::Result;
 use serde::Serialize;
 use std::io::{ErrorKind, Write};
@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use crossbeam_channel::Receiver;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -23,7 +22,7 @@ pub(crate) fn get_data_from_jetson(
     data_port: u16,
     control_port: u16,
     path: PathBuf,
-    rx: Receiver<()>
+    read_start: Arc<AtomicBool>,
 ) -> Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{address}:{data_port}"))?;
@@ -35,8 +34,8 @@ pub(crate) fn get_data_from_jetson(
     let mut wtr = csv::Writer::from_path(path.join("jetson.csv"))?;
 
     let mut buf = [b' '; 512];
-    let data_thread = thread::spawn(move || -> Result<()> {
-        rx.recv().expect("Could not receive from channel");
+    let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
+        while !read_start.load(Ordering::Acquire) {}
 
         // starting datastream
         socket.send("go\n".as_bytes())?;
@@ -79,19 +78,17 @@ pub(crate) fn get_data_from_jetson(
                     .parse()?,
             })?;
         }
-        println!("Flushing Jetson data writer");
-        wtr.flush()?;
-        println!("Jetson data writer is finished");
-        Ok(())
+        log::info!("Finishing thread");
+        Ok(DataThreadReturnVal::CsvWriter(wtr))
     });
     Ok((
         Box::new(move || {
-            println!("Shutting down Jetson Interface");
+            log::info!("Shutting down Jetson Interface");
             running_clone.store(false, Ordering::Relaxed);
             let mut control_connection =
                 TcpStream::connect(format!("{address}:{control_port}"))?;
             let _ = control_connection.write("stop\n".as_bytes())?;
-            println!("Waiting for Data-Writer");
+            log::info!("Waiting for Jetson Data-Writer");
             Ok(())
         }),
         data_thread,
