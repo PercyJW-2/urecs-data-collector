@@ -62,7 +62,7 @@ pub(crate) fn get_data_from_firmware(
     let mut wtr = csv::Writer::from_path(path.join("firmware.csv"))?;
 
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
-        while read_start.load(Ordering::Acquire) {}
+        while !read_start.load(Ordering::Acquire) {}
         
         let mut last_sensor_update = 0;
         while running.load(Ordering::Relaxed) {

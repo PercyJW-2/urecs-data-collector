@@ -19,7 +19,7 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>) 
 
     let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
 
-        while read_start.load(Ordering::Acquire) {}
+        while !read_start.load(Ordering::Acquire) {}
 
         //instrument_wrapper.start(50_000_000)?;
         instrument_wrapper.start(1_000)?;

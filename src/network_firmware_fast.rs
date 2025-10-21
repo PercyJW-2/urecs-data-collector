@@ -32,7 +32,7 @@ pub(crate) fn get_data_from_fast_firmware(
 
     let mut buf = [b' '; 4096];
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
-        while read_start.load(Ordering::Acquire) {}
+        while !read_start.load(Ordering::Acquire) {}
         
         // starting datastream
         socket.send("go\n".as_bytes())?;
