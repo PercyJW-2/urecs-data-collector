@@ -41,7 +41,7 @@ pub(crate) fn get_data_from_fast_firmware(
             match socket.recv(&mut buf) {
                 Ok(length) => {
                     len = length;
-                    if len == 0 || buf[len - 1] != b'\n' {
+                    if len == 0 {//|| buf[len - 1] != b'\n' {
                         continue;
                     }
                 },
@@ -57,9 +57,9 @@ pub(crate) fn get_data_from_fast_firmware(
                     }
                 }
             }
-            let mut msg_iter = buf.split(|c| *c == b'\n');
+            let mut msg_iter = buf[0..len].split(|c| *c == b'\n');
             for msg in &mut msg_iter {
-                if msg.len() < 12 {
+                if msg.len() != 10 {
                     continue;
                 }
                 let mut measurement_buf = [0u8; 8];
