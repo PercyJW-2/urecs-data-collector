@@ -11,7 +11,7 @@ use std::time::Duration;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct FirmwareFastMeasurement {
-    measurement_time: i64,
+    measurement_time: u16,
     current: u16,
 }
 
@@ -30,7 +30,7 @@ pub(crate) fn get_data_from_fast_firmware(
 
     let mut wtr = csv::Writer::from_path(path.join("fast_firmware.csv"))?;
 
-    let mut buf = [b' '; 4096];
+    let mut buf = [b' '; 8192];
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Acquire) {}
         
@@ -62,12 +62,12 @@ pub(crate) fn get_data_from_fast_firmware(
                 if msg.len() != 10 {
                     continue;
                 }
-                let mut measurement_buf = [0u8; 8];
+                let mut measurement_buf = [0u8; 2];
                 let mut current_buf = [0u8; 2];
-                measurement_buf.copy_from_slice(&msg[..8]);
-                current_buf.copy_from_slice(&msg[8..10]);
+                measurement_buf.copy_from_slice(&msg[..2]);
+                current_buf.copy_from_slice(&msg[2..4]);
                 wtr.serialize(FirmwareFastMeasurement {
-                    measurement_time: i64::from_le_bytes(measurement_buf),
+                    measurement_time: u16::from_le_bytes(measurement_buf),
                     current: u16::from_le_bytes(current_buf),
                 })
                 .expect("Could not write Fast Firmware measurement");
