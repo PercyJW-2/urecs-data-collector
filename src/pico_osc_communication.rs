@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use log::info;
+use pico_sdk::common::{PicoExtraOperations, PicoSigGenTrigSource, PicoSigGenTrigType, PicoSweepType, PicoWaveType, SetSigGenBuiltInV2Properties, SweepShotCount};
 
 pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>) -> Result<(ShutdownFn, DataThread)> {
     let running = Arc::new(AtomicBool::new(true));
@@ -23,7 +24,7 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>) 
 
         //instrument_wrapper.start(50_000_000)?;
         instrument_wrapper.start(5_000_000)?;
-        while running.load(std::sync::atomic::Ordering::Relaxed) {
+        while running.load(Ordering::Relaxed) {
             //thread::sleep(std::time::Duration::from_millis(1));
         }
         instrument_wrapper.stop();
@@ -57,6 +58,24 @@ impl USBInstrumentWrapper {
             .expect("No device enumerated");
         let device = enum_device.open()?;
         let stream_device = device.into_streaming_device();
+
+        /* uncomment if you want to enable the function generator
+        stream_device.set_sig_gen_built_in_v2(SetSigGenBuiltInV2Properties{
+            offset_voltage: 1_000_000,
+            pk_to_pk: 900_000,
+            wave_type: PicoWaveType::Sine,
+            start_frequency: 5_000f64,
+            stop_frequency: 5_000f64,
+            increment: 0.0,
+            dwell_time: 0.0,
+            sweep_type: PicoSweepType::Up,
+            extra_operations: PicoExtraOperations::Off,
+            sweeps_shots: SweepShotCount::ContinuousShots,
+            trig_type: Default::default(),
+            trig_source: PicoSigGenTrigSource::None,
+            ext_in_threshold: 0,
+        })?;
+         */
 
         stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_5V, PicoCoupling::DC);
         stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_20V, PicoCoupling::DC);
