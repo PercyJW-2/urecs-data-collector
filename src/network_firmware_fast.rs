@@ -11,6 +11,7 @@ use std::time::Duration;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct FirmwareFastMeasurement {
+    packet_timestamp: i64,
     measurement_time: u16,
     current: u16,
 }
@@ -30,7 +31,7 @@ pub(crate) fn get_data_from_fast_firmware(
 
     let mut wtr = csv::Writer::from_path(path.join("fast_firmware.csv"))?;
 
-    let mut buf = [b' '; 8192];
+    let mut buf = [b' '; 1024];
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Acquire) {}
         
@@ -41,13 +42,15 @@ pub(crate) fn get_data_from_fast_firmware(
             match socket.recv(&mut buf) {
                 Ok(length) => {
                     len = length;
-                    if len == 0 {//|| buf[len - 1] != b'\n' {
+                    if len != 1024 {
+                        log::warn!("Invalid Packet Length ({len}), skipping");
                         continue;
                     }
                 },
                 Err(err) => {
                     match err.kind() { 
                         ErrorKind::TimedOut | ErrorKind::WouldBlock => {
+                            log::warn!("Could not read from Socket, trying again...");
                             continue;
                         }
                         _ => {
@@ -57,18 +60,15 @@ pub(crate) fn get_data_from_fast_firmware(
                     }
                 }
             }
-            let mut msg_iter = buf[0..len].split(|c| *c == b'\n');
+            let mut msg_iter = buf[8..len].chunks(4);
+            let mut packet_header = [0u8; 8];
+            packet_header.copy_from_slice(&buf[0..8]);
+            let packet_timestamp = i64::from_le_bytes(packet_header);
             for msg in &mut msg_iter {
-                if msg.len() != 10 {
-                    continue;
-                }
-                let mut measurement_buf = [0u8; 2];
-                let mut current_buf = [0u8; 2];
-                measurement_buf.copy_from_slice(&msg[..2]);
-                current_buf.copy_from_slice(&msg[2..4]);
                 wtr.serialize(FirmwareFastMeasurement {
-                    measurement_time: u16::from_le_bytes(measurement_buf),
-                    current: u16::from_le_bytes(current_buf),
+                    packet_timestamp,
+                    measurement_time: u16::from_le_bytes([msg[0], msg[1]]),
+                    current: u16::from_le_bytes([msg[2], msg[3]]),
                 })
                 .expect("Could not write Fast Firmware measurement");
             }
