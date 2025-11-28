@@ -1,6 +1,6 @@
-use std::io::ErrorKind;
 use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 use serde::Serialize;
+use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,8 +11,8 @@ use std::time::Duration;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct FirmwareFastMeasurement {
-    packet_timestamp: i64,
-    measurement_time: u16,
+    //packet_timestamp: i64,
+    //measurement_time: u16,
     current: u16,
 }
 
@@ -20,7 +20,7 @@ pub(crate) fn get_data_from_fast_firmware(
     address: String,
     data_port: u16,
     path: PathBuf,
-    read_start: Arc<AtomicBool>
+    read_start: Arc<AtomicBool>,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{address}:{data_port}"))?;
@@ -31,10 +31,10 @@ pub(crate) fn get_data_from_fast_firmware(
 
     let mut wtr = csv::Writer::from_path(path.join("fast_firmware.csv"))?;
 
-    let mut buf = [b' '; 1024];
+    let mut buf = [b' '; 20];
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Acquire) {}
-        
+
         // starting datastream
         socket.send("go\n".as_bytes())?;
         while running.load(Ordering::Relaxed) {
@@ -42,33 +42,31 @@ pub(crate) fn get_data_from_fast_firmware(
             match socket.recv(&mut buf) {
                 Ok(length) => {
                     len = length;
-                    if len != 1024 {
+                    if len != 20 {
                         log::warn!("Invalid Packet Length ({len}), skipping");
                         continue;
                     }
-                },
-                Err(err) => {
-                    match err.kind() { 
-                        ErrorKind::TimedOut | ErrorKind::WouldBlock => {
-                            log::warn!("Could not read from Socket, trying again...");
-                            continue;
-                        }
-                        _ => {
-                            log::error!("Error on receiving data: {err}");
-                            break;
-                        }
-                    }
                 }
+                Err(err) => match err.kind() {
+                    ErrorKind::TimedOut | ErrorKind::WouldBlock => {
+                        log::warn!("Could not read from Socket, trying again...");
+                        continue;
+                    }
+                    _ => {
+                        log::error!("Error on receiving data: {err}");
+                        break;
+                    }
+                },
             }
-            let mut msg_iter = buf[8..len].chunks(4);
-            let mut packet_header = [0u8; 8];
-            packet_header.copy_from_slice(&buf[0..8]);
-            let packet_timestamp = i64::from_le_bytes(packet_header);
+            let mut msg_iter = buf.chunks(2);
+            //let mut packet_header = [0u8; 8];
+            //packet_header.copy_from_slice(&buf[0..8]);
+            //let packet_timestamp = i64::from_le_bytes(packet_header);
             for msg in &mut msg_iter {
                 wtr.serialize(FirmwareFastMeasurement {
-                    packet_timestamp,
-                    measurement_time: u16::from_le_bytes([msg[0], msg[1]]),
-                    current: u16::from_le_bytes([msg[2], msg[3]]),
+                    //packet_timestamp,
+                    //measurement_time: u16::from_le_bytes([msg[0], msg[1]]),
+                    current: u16::from_le_bytes([msg[0], msg[1]]),
                 })
                 .expect("Could not write Fast Firmware measurement");
             }
