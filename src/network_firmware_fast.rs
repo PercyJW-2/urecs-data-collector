@@ -12,8 +12,8 @@ use std::time::Duration;
 #[serde(rename_all = "PascalCase")]
 struct FirmwareFastMeasurement {
     //packet_timestamp: i64,
-    //measurement_time: u16,
-    current: f32,
+    measurement_index: u16,
+    current: u16,
 }
 
 pub(crate) fn get_data_from_fast_firmware(
@@ -31,7 +31,7 @@ pub(crate) fn get_data_from_fast_firmware(
 
     let mut wtr = csv::Writer::from_path(path.join("fast_firmware.csv"))?;
 
-    let mut buf = [b' '; 20];
+    let mut buf = [b' '; 256];
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Acquire) {}
 
@@ -42,7 +42,7 @@ pub(crate) fn get_data_from_fast_firmware(
             match socket.recv(&mut buf) {
                 Ok(length) => {
                     len = length;
-                    if len != 20 {
+                    if len != 256 {
                         log::warn!("Invalid Packet Length ({len}), skipping");
                         continue;
                     }
@@ -63,14 +63,10 @@ pub(crate) fn get_data_from_fast_firmware(
             //packet_header.copy_from_slice(&buf[0..8]);
             //let packet_timestamp = i64::from_le_bytes(packet_header);
             for msg in &mut msg_iter {
-                let raw_current = u16::from_le_bytes([msg[0], msg[1]]);
-                // ADC has values between 4095 and 0, INA225 has gain of 25V/V, Current Shunt has value of 0.02 Ohm
-                // raw_val / 4096 / 25 / 0.02 = current <=> raw_val / 2048
-                let current = f32::from(raw_current) / 2048f32;
                 wtr.serialize(FirmwareFastMeasurement {
                     //packet_timestamp,
-                    //measurement_time: u16::from_le_bytes([msg[0], msg[1]]),
-                    current,
+                    measurement_index: u16::from_le_bytes([msg[0], msg[1]]),
+                    current: u16::from_le_bytes([msg[2], msg[3]]),
                 })
                 .expect("Could not write Fast Firmware measurement");
             }
