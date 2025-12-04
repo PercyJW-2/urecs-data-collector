@@ -43,13 +43,15 @@ pub(crate) fn get_data_from_fast_firmware(
                 Ok(length) => {
                     len = length;
                     if len != 256 {
-                        log::warn!("Invalid Packet Length ({len}), skipping");
+                        log::warn!("Invalid Packet Length ({len}), stopping recording");
+                        running.store(false, Ordering::Relaxed);
                         continue;
                     }
                 }
                 Err(err) => match err.kind() {
                     ErrorKind::TimedOut | ErrorKind::WouldBlock => {
-                        log::warn!("Could not read from Socket, trying again...");
+                        log::warn!("Could not read from Socket, stopping recording");
+                        running.store(false, Ordering::Relaxed);
                         continue;
                     }
                     _ => {
