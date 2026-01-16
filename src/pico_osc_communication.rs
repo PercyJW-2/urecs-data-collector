@@ -9,21 +9,21 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use log::info;
-use pico_sdk::common::{PicoExtraOperations, PicoSigGenTrigSource, PicoSigGenTrigType, PicoSweepType, PicoWaveType, SetSigGenBuiltInV2Properties, SweepShotCount};
+use pico_sdk::common::{PicoExtraOperations, PicoSigGenTrigSource, PicoSweepType, PicoWaveType, SetSigGenBuiltInV2Properties, SweepShotCount};
 
-pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>) -> Result<(ShutdownFn, DataThread)> {
+pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>, sample_rate: u32, start_func_gen: bool) -> Result<(ShutdownFn, DataThread)> {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
     let wtr_handler = CSVHandler::new(path.join("usb_osc_data.csv"))?;
-    let mut instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler))?;
+    let mut instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler), start_func_gen)?;
 
     let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
 
         while !read_start.load(Ordering::Acquire) {}
 
         //instrument_wrapper.start(50_000_000)?;
-        instrument_wrapper.start(5_000_000)?;
+        instrument_wrapper.start(sample_rate)?;
         while running.load(Ordering::Relaxed) {
             //thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -35,7 +35,7 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>) 
     Ok((
         Box::new(move || {
             println!("Shutting down USBOsc");
-            running_clone.store(false, std::sync::atomic::Ordering::Relaxed);
+            running_clone.store(false, Ordering::Relaxed);
             Ok(())
         }),
         data_thread
@@ -48,7 +48,7 @@ pub(crate) struct USBInstrumentWrapper {
 }
 
 impl USBInstrumentWrapper {
-    fn new(csv_handler: Arc<CSVHandler>) -> Result<Self> {
+    fn new(csv_handler: Arc<CSVHandler>, start_func_gen: bool) -> Result<Self> {
         let enumerator = DeviceEnumerator::new();
         let enum_device = enumerator
             .enumerate()
@@ -59,30 +59,30 @@ impl USBInstrumentWrapper {
         let device = enum_device.open()?;
         let stream_device = device.into_streaming_device();
 
-        /* uncomment if you want to enable the function generator
-        stream_device.set_sig_gen_built_in_v2(SetSigGenBuiltInV2Properties{
-            offset_voltage: 1_000_000,
-            pk_to_pk: 900_000,
-            wave_type: PicoWaveType::Sine,
-            start_frequency: 5_000f64,
-            stop_frequency: 5_000f64,
-            increment: 0.0,
-            dwell_time: 0.0,
-            sweep_type: PicoSweepType::Up,
-            extra_operations: PicoExtraOperations::Off,
-            sweeps_shots: SweepShotCount::ContinuousShots,
-            trig_type: Default::default(),
-            trig_source: PicoSigGenTrigSource::None,
-            ext_in_threshold: 0,
-        })?;
-         */
-
+        if start_func_gen {
+            stream_device.set_sig_gen_built_in_v2(SetSigGenBuiltInV2Properties {
+                offset_voltage: 1_000_000,
+                pk_to_pk: 900_000,
+                wave_type: PicoWaveType::Sine,
+                start_frequency: 5_000f64,
+                stop_frequency: 5_000f64,
+                increment: 0.0,
+                dwell_time: 0.0,
+                sweep_type: PicoSweepType::Up,
+                extra_operations: PicoExtraOperations::Off,
+                sweeps_shots: SweepShotCount::ContinuousShots,
+                trig_type: Default::default(),
+                trig_source: PicoSigGenTrigSource::None,
+                ext_in_threshold: 0,
+            })?;
+        }
+        
         stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_5V, PicoCoupling::DC);
         stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_20V, PicoCoupling::DC);
         stream_device.new_data.subscribe(csv_handler.clone());
 
         Ok(Self {
-            csv_handler: csv_handler,
+            csv_handler,
             stream_device,
         })
     }

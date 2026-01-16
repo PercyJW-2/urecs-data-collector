@@ -94,6 +94,12 @@ enum Sources {
     #[subenum(UsbOscilloscope)]
     #[bpaf(command, adjacent)]
     UsbOscilloscope {
+        /// Sample-rate that is used, default is 5MS/s
+        #[bpaf(short, long)]
+        sample_rate: Option<u32>,
+        /// use function-generator of picoscope
+        #[bpaf(short, long)]
+        use_function_gen: bool,
     }
 }
 
@@ -199,12 +205,14 @@ fn main() -> Result<()> {
                     read_start.clone()
                 )
             }
-            Sources::UsbOscilloscope {} => {
+            Sources::UsbOscilloscope { sample_rate, use_function_gen } => {
                 launch_usb_oscilloscope(
                     &shutdown_funcs,
                     &mut data_threads,
                     path.to_path_buf(),
-                    read_start.clone()
+                    read_start.clone(),
+                    sample_rate.unwrap_or(5_000_000),
+                    use_function_gen
                 )
             }
         }
@@ -257,8 +265,10 @@ fn launch_usb_oscilloscope(
     data_threads: &mut Vec<DataThread>,
     path: PathBuf,
     read_start: Arc<AtomicBool>,
+    sample_rate: u32,
+    start_func_gen: bool
 ) {
-    match pico_osc_communication::get_data_from_usb_osc(path, read_start) {
+    match pico_osc_communication::get_data_from_usb_osc(path, read_start, sample_rate, start_func_gen) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
