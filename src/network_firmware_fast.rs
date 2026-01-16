@@ -60,7 +60,7 @@ pub(crate) fn get_data_from_fast_firmware(
                     }
                 },
             }
-            let mut msg_iter = buf.chunks(2);
+            let mut msg_iter = buf.chunks(4);
             //let mut packet_header = [0u8; 8];
             //packet_header.copy_from_slice(&buf[0..8]);
             //let packet_timestamp = i64::from_le_bytes(packet_header);
