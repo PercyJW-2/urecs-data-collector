@@ -1188,7 +1188,7 @@ checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 [[package]]
 name = "pico-common"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "enum-iterator",
  "num-derive",
@@ -1200,7 +1200,7 @@ dependencies = [
 [[package]]
 name = "pico-device"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "parking_lot",
  "pico-common",
@@ -1211,7 +1211,7 @@ dependencies = [
 [[package]]
 name = "pico-download"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "directories",
  "http_req",
@@ -1224,7 +1224,7 @@ dependencies = [
 [[package]]
 name = "pico-driver"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "c_vec",
  "lazy_static",
@@ -1241,7 +1241,7 @@ dependencies = [
 [[package]]
 name = "pico-enumeration"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "parking_lot",
  "pico-common",
@@ -1256,7 +1256,7 @@ dependencies = [
 [[package]]
 name = "pico-sdk"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "pico-common",
  "pico-device",
@@ -1270,7 +1270,7 @@ dependencies = [
 [[package]]
 name = "pico-streaming"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "crossbeam",
  "parking_lot",
@@ -1283,7 +1283,7 @@ dependencies = [
 [[package]]
 name = "pico-sys-dynamic"
 version = "0.4.0"
-source = "git+https://github.com/percyjw-2/pico-sdk.git?branch=master#fde61eec90892d540259519bde9c9073cda27e7d"
+source = "git+https://github.com/percyjw-2/pico-sdk.git?rev=a864a90#a864a9014f5fce4006f90d4f0ccbfeacaa043e72"
 dependencies = [
  "libloading",
 ]
