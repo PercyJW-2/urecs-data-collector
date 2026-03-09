@@ -77,7 +77,7 @@ impl USBInstrumentWrapper {
         }
         
         stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_200MV, PicoCoupling::DC, -0.2);
-        stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_10V, PicoCoupling::DC, 15.0);
+        stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_10V, PicoCoupling::DC, -15.0);
         stream_device.new_data.subscribe(csv_handler.clone());
 
         Ok(Self {
