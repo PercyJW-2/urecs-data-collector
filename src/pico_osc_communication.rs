@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
 use log::info;
 use pico_sdk::common::{PicoExtraOperations, PicoSigGenTrigSource, PicoSweepType, PicoWaveType, SetSigGenBuiltInV2Properties, SweepShotCount};
 
@@ -89,7 +88,6 @@ impl USBInstrumentWrapper {
 
     fn start(&mut self, sample_rate: u32) -> Result<()> {
         self.stream_device.start(sample_rate)?;
-        self.csv_handler.start();
         Ok(())
     }
 
@@ -101,15 +99,12 @@ impl USBInstrumentWrapper {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct UsbOscMeasurement {
-    measurement_timestamp: u128,
-    sample_index: usize,
     voltage: f64,
     current: f64,
 }
 
 pub(crate) struct CSVHandler {
     pub(crate) csv_writer: Mutex<csv::Writer<File>>,
-    start_time: Mutex<Instant>,
 }
 
 impl CSVHandler {
@@ -117,29 +112,20 @@ impl CSVHandler {
         let wtr = csv::Writer::from_path(path)?;
         Ok(Self {
             csv_writer: Mutex::new(wtr),
-            start_time: Mutex::new(Instant::now())
         })
-    }
-
-    fn start(&self) {
-        let mut start_time_lock = self.start_time.lock().expect("Could not lock the mutex");
-        *start_time_lock = Instant::now();
     }
 }
 
 impl NewDataHandler for CSVHandler {
     fn handle_event(&self, value: &StreamingEvent) {
-        let current_time = self.start_time.lock().expect("Could not lock the mutex").elapsed();
         let mut wtr_lock = self.csv_writer.lock().expect("Could not lock the mutex");
         let channel_a_data = &value.channels[&PicoChannel::A].scale_samples();
         let channel_b_data = &value.channels[&PicoChannel::B].scale_samples();
-        channel_a_data.iter().zip(channel_b_data.iter()).enumerate().for_each(|(idx, (channel_a, channel_b))| {
+        channel_a_data.iter().zip(channel_b_data.iter()).for_each(|(channel_a, channel_b)| {
             //println!("{}", *channel_b);
             wtr_lock.serialize(UsbOscMeasurement {
-                measurement_timestamp: current_time.as_micros(),
-                sample_index: idx,
                 current: (*channel_a + 0.2) * 10., // value can be used directly, as 1V algins to 1A
-                voltage: -(*channel_b) + 15.0, // voltage needs to be negated, as it is measured reversely
+                voltage: *channel_b + 15.0, // voltage needs to be negated, as it is measured reversely
             }).expect("Could not serialize USB Osc measurement");
         });
     }
