@@ -15,6 +15,7 @@ visa-rs = { version = "0.6.2", optional = true }
 pico-sdk = { git = "https://github.com/percyjw-2/pico-sdk.git", rev = "a864a90"}
 log = "0.4.28"
 simple_logger = "5.1.0"
+parse_duration = "2.1.1"
 
 [features]
 visa = ["dep:visa-rs"]

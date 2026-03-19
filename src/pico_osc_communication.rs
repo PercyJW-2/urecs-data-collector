@@ -33,7 +33,7 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>, 
 
     Ok((
         Box::new(move || {
-            println!("Shutting down USBOsc");
+            info!("Shutting down USBOsc");
             running_clone.store(false, Ordering::Relaxed);
             Ok(())
         }),

@@ -12,10 +12,12 @@ use std::{fs, io};
 use std::ops::Deref;
 use anyhow::{anyhow, Result};
 use bpaf::Bpaf;
+use parse_duration::parse;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
+use std::thread::{sleep, JoinHandle};
+use std::time::Duration;
 use subenum::subenum;
 use crate::pico_osc_communication::USBInstrumentWrapper;
 
@@ -35,6 +37,9 @@ struct Arguments {
     /// If not provided, the current folder will be used.
     #[bpaf(short, long)]
     storage_path: Option<String>,
+    /// Duration, how long to measure
+    #[bpaf(short, long, argument::<String>("DURATION"), map(|dur| parse(dur.as_str())))]
+    duration: Result<Duration, parse::Error>,
     /// First input source to be recorded
     #[bpaf(external, many)]
     sources: Vec<Sources>,
@@ -154,6 +159,7 @@ fn main() -> Result<()> {
     }
 
     // start data acquisition
+    let duration = args.duration?;
     let mut data_threads = Vec::new();
     let read_start = Arc::new(AtomicBool::new(false));
     for source in args.sources {
@@ -166,7 +172,7 @@ fn main() -> Result<()> {
                     data_port,
                     control_port,
                     path.to_path_buf(),
-                    read_start.clone()
+                    read_start.clone(),
                 );
             }
             Sources::Firmware { address } => {
@@ -175,7 +181,7 @@ fn main() -> Result<()> {
                     &mut data_threads,
                     address,
                     path.to_path_buf(),
-                    read_start.clone()
+                    read_start.clone(),
                 );
             }
             Sources::FastFirmware { address, data_port } => {
@@ -185,7 +191,8 @@ fn main() -> Result<()> {
                     address,
                     data_port,
                     path.to_path_buf(),
-                    read_start.clone()
+                    read_start.clone(),
+                    duration,
                 );
             }
             Sources::ShellyPlug { address } => {
@@ -194,7 +201,7 @@ fn main() -> Result<()> {
                     &mut data_threads,
                     address,
                     path.to_path_buf(),
-                    read_start.clone()
+                    read_start.clone(),
                 )
             }
             Sources::Oscilloscope {} => {
@@ -212,7 +219,7 @@ fn main() -> Result<()> {
                     path.to_path_buf(),
                     read_start.clone(),
                     sample_rate.unwrap_or(5_000_000),
-                    use_function_gen
+                    use_function_gen,
                 )
             }
         }
@@ -221,14 +228,14 @@ fn main() -> Result<()> {
     log::info!("Starting measurement");
     read_start.store(true, Ordering::Release);
 
-
-    let mut buffer = String::new();
+    sleep(duration + Duration::from_millis(100));
+    /*let mut buffer = String::new();
     loop {
         io::stdin().read_line(&mut buffer)?;
         if buffer.contains("q") || buffer.contains("stop") {
             break;
         }
-    }
+    }*/
     log::info!("Shutting down...");
     for func in shutdown_funcs
         .lock()
@@ -266,7 +273,7 @@ fn launch_usb_oscilloscope(
     path: PathBuf,
     read_start: Arc<AtomicBool>,
     sample_rate: u32,
-    start_func_gen: bool
+    start_func_gen: bool,
 ) {
     match pico_osc_communication::get_data_from_usb_osc(path, read_start, sample_rate, start_func_gen) {
         Ok((shutdown_func, data_thread)) => {
@@ -362,8 +369,9 @@ fn launch_fast_firmware(
     port: u16,
     path: PathBuf,
     read_start: Arc<AtomicBool>,
+    duration: Duration,
 ) {
-    match network_firmware_fast::get_data_from_fast_firmware(address, port, path, read_start) {
+    match network_firmware_fast::get_data_from_fast_firmware(address, port, path, read_start, duration) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
