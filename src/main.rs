@@ -7,13 +7,13 @@ mod utils;
 mod visa_osc_communication;
 mod pico_osc_communication;
 
-use std::fs::File;
-use std::{fs, io};
+use std::{fs, fs::File};
 use std::ops::Deref;
 use anyhow::{anyhow, Result};
 use bpaf::Bpaf;
 use parse_duration::parse;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{sleep, JoinHandle};
@@ -40,6 +40,9 @@ struct Arguments {
     /// Duration, how long to measure
     #[bpaf(short, long, argument::<String>("DURATION"), map(|dur| parse(dur.as_str())))]
     duration: Result<Duration, parse::Error>,
+    /// Optional Command that is executed after the measurement begins
+    #[bpaf(short, long)]
+    command: Option<String>,
     /// First input source to be recorded
     #[bpaf(external, many)]
     sources: Vec<Sources>,
@@ -228,7 +231,23 @@ fn main() -> Result<()> {
     log::info!("Starting measurement");
     read_start.store(true, Ordering::Release);
 
+    let mut command = None;
+    if let Some(cmd) = args.command {
+        log::info!("Running command: {}", cmd);
+        let cmd_split = shell_words::split(&cmd)?;
+        command = Some(Command::new(&cmd_split[0])
+            .args(&cmd_split[1..])
+            .stdout(Stdio::null()) // ignoring output of executed command
+            .spawn()?);
+    }
+
     sleep(duration + Duration::from_millis(100));
+
+    if let Some(mut cmd) = command {
+        log::info!("Waiting for command to finish");
+        cmd.wait()?;
+    }
+
     /*let mut buffer = String::new();
     loop {
         io::stdin().read_line(&mut buffer)?;
