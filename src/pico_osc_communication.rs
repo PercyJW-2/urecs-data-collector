@@ -76,7 +76,7 @@ impl USBInstrumentWrapper {
             })?;
         }
         
-        stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_200MV, PicoCoupling::DC, -0.2);
+        stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_2V, PicoCoupling::DC, -2.0);
         stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_10V, PicoCoupling::DC, -15.0);
         stream_device.new_data.subscribe(csv_handler.clone());
 
@@ -124,7 +124,7 @@ impl NewDataHandler for CSVHandler {
         channel_a_data.iter().zip(channel_b_data.iter()).for_each(|(channel_a, channel_b)| {
             //println!("{}", *channel_b);
             wtr_lock.serialize(UsbOscMeasurement {
-                current: (*channel_a + 0.2) * 10., // value can be used directly, as 1V algins to 1A
+                current: *channel_a + 2.0, // value can be used directly, as 1V algins to 1A
                 voltage: *channel_b + 15.0, // voltage needs to be negated, as it is measured reversely
             }).expect("Could not serialize USB Osc measurement");
         });
