@@ -21,6 +21,8 @@ use std::time::Duration;
 use subenum::subenum;
 use crate::pico_osc_communication::USBInstrumentWrapper;
 
+const IDLE_DURATION: Duration = Duration::from_secs(5);
+
 pub(crate) type ShutdownFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
 
 pub(crate) enum DataThreadReturnVal {
@@ -162,6 +164,7 @@ fn main() -> Result<()> {
     }
 
     // start data acquisition
+    // add 10 seconds to runtime to create idle edge at the end and start
     let duration = args.duration?;
     let mut data_threads = Vec::new();
     let read_start = Arc::new(AtomicBool::new(false));
@@ -195,7 +198,7 @@ fn main() -> Result<()> {
                     data_port,
                     path.to_path_buf(),
                     read_start.clone(),
-                    duration,
+                    duration + (IDLE_DURATION * 2),
                 );
             }
             Sources::ShellyPlug { address } => {
@@ -231,6 +234,7 @@ fn main() -> Result<()> {
     log::info!("Starting measurement");
     read_start.store(true, Ordering::Release);
 
+    sleep(IDLE_DURATION);
     let mut command = None;
     if let Some(cmd) = args.command {
         log::info!("Running command: {}", cmd);
@@ -241,7 +245,7 @@ fn main() -> Result<()> {
             .spawn()?);
     }
 
-    sleep(duration + Duration::from_millis(100));
+    sleep(duration + IDLE_DURATION);
 
     if let Some(mut cmd) = command {
         log::info!("Waiting for command to finish");
