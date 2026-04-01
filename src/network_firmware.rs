@@ -1,11 +1,16 @@
-use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
-use serde::{Deserialize, Serialize};
+use std::fs::File;
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn, PARQUET_BATCH_ROW_COUNT};
+use serde::{Deserialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 use crate::utils::is_response_valid;
+use parquet::arrow::ArrowWriter as ParquetWriter;
+use arrow::array::{ArrayBuilder, UInt64Builder, Float64Builder};
+use arrow::datatypes::{Field, Schema, DataType::{UInt64, Float64}};
+use arrow::record_batch::RecordBatch;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -36,14 +41,6 @@ struct NodeJetson {
     present: bool,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct FirmwareMeasurement {
-    measurement_time: usize,
-    voltage: f64,
-    power: f64,
-}
-
 pub(crate) fn get_data_from_firmware(
     address: String,
     path: PathBuf,
@@ -59,7 +56,16 @@ pub(crate) fn get_data_from_firmware(
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
-    let mut wtr = csv::Writer::from_path(path.join("firmware.csv"))?;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("measurement_time", UInt64, false),
+        Field::new("voltage", Float64, false),
+        Field::new("power", Float64, false),
+    ]));
+    let file = File::create(path.join("firmware.parquet"))?;
+    let mut wtr = ParquetWriter::try_new(file, schema.clone(), None)?;
+    let mut time_array = UInt64Builder::new();
+    let mut voltage_array = Float64Builder::new();
+    let mut power_array = Float64Builder::new();
 
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Acquire) {}
@@ -79,17 +85,29 @@ pub(crate) fn get_data_from_firmware(
                 quick_xml::de::from_str(&body).expect("Could not parse node XML");
             if last_sensor_update != node.last_sensor_update {
                 last_sensor_update = node.last_sensor_update;
-                wtr.serialize(FirmwareMeasurement {
-                    measurement_time: last_sensor_update,
-                    voltage: node.voltage,
-                    power: node.actual_power_usage,
-                })
-                .expect("Could not write Firmware Measurement");
+                time_array.append_value(last_sensor_update as u64);
+                voltage_array.append_value(node.voltage);
+                power_array.append_value(node.actual_power_usage);
+
+                if time_array.len() >= PARQUET_BATCH_ROW_COUNT {
+                    let batch = RecordBatch::try_new(schema.clone(), vec![
+                        Arc::new(time_array.finish()),
+                        Arc::new(voltage_array.finish()),
+                        Arc::new(power_array.finish()),
+                    ])?;
+                    wtr.write(&batch)?;
+                }
             }
             thread::sleep(Duration::from_millis(100));
         }
         log::info!("Finishing thread");
-        Ok(DataThreadReturnVal::CsvWriter(wtr))
+        let batch = RecordBatch::try_new(schema.clone(), vec![
+            Arc::new(time_array.finish()),
+            Arc::new(voltage_array.finish()),
+            Arc::new(power_array.finish()),
+        ])?;
+        wtr.write(&batch)?;
+        Ok(DataThreadReturnVal::ParquetWriter(wtr))
     });
     Ok((
         Box::new(move || {

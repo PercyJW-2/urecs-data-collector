@@ -1,11 +1,16 @@
+use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
-use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
+use serde::{Deserialize};
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn, PARQUET_BATCH_ROW_COUNT};
 use crate::utils::is_response_valid;
+use arrow::array::{ArrayBuilder, UInt64Builder, Float32Builder};
+use arrow::datatypes::{Field, Schema, DataType::{UInt64, Float32}};
+use arrow::record_batch::RecordBatch;
+use parquet::arrow::ArrowWriter as ParquetWriter;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -37,15 +42,6 @@ struct Temperature {
     t_f: f32
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct ShellyPlugMeasurement {
-    measurement_time: u128,
-    voltage: f32,
-    current: f32,
-    power: f32
-}
-
 pub(crate) fn get_data_from_shelly(
     address: String,
     path: PathBuf,
@@ -59,7 +55,18 @@ pub(crate) fn get_data_from_shelly(
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
-    let mut wtr = csv::Writer::from_path(path.join("shellyPlug.csv"))?;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("measurement_time", UInt64, false),
+        Field::new("voltage", Float32, false),
+        Field::new("current", Float32, false),
+        Field::new("power", Float32, false),
+    ]));
+    let file = File::create(path.join("shellyPlug.parquet"))?;
+    let mut wtr = ParquetWriter::try_new(file, schema.clone(), None)?;
+    let mut time_array = UInt64Builder::new();
+    let mut voltage_array = Float32Builder::new();
+    let mut current_array = Float32Builder::new();
+    let mut power_array = Float32Builder::new();
 
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Acquire) {}
@@ -77,17 +84,30 @@ pub(crate) fn get_data_from_shelly(
             }
             last_consumed_energy = json_body.aenergy.total;
 
-            wtr.serialize(ShellyPlugMeasurement {
-                measurement_time: measurement_start.elapsed().as_micros(),
-                voltage: json_body.voltage,
-                current: json_body.current,
-                power: json_body.apower,
-            })
-            .expect("Could not write Shelly Plug Measurement");
+            time_array.append_value(measurement_start.elapsed().as_micros() as u64);
+            voltage_array.append_value(json_body.voltage);
+            current_array.append_value(json_body.current);
+            power_array.append_value(json_body.apower);
 
+            if time_array.len() >= PARQUET_BATCH_ROW_COUNT {
+                let batch = RecordBatch::try_new(schema.clone(), vec![
+                    Arc::new(time_array.finish()),
+                    Arc::new(voltage_array.finish()),
+                    Arc::new(current_array.finish()),
+                    Arc::new(power_array.finish())
+                ])?;
+                wtr.write(&batch)?;
+            }
             thread::sleep(Duration::from_millis(100));
         }
         log::info!("Finishing Thread");
+        let batch = RecordBatch::try_new(schema.clone(), vec![
+            Arc::new(time_array.finish()),
+            Arc::new(voltage_array.finish()),
+            Arc::new(current_array.finish()),
+            Arc::new(power_array.finish()),
+        ])?;
+        wtr.write(&batch)?;
         Ok(DataThreadReturnVal::WriterAndExtraFile((
             wtr,
             path.join("shellyFinalPower.txt"),

@@ -1,5 +1,5 @@
-use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
-use serde::Serialize;
+use std::fs::File;
+use crate::{DataThread, DataThreadReturnVal, ShutdownFn, PARQUET_BATCH_ROW_COUNT};
 use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::path::PathBuf;
@@ -7,14 +7,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct FirmwareFastMeasurement {
-    //packet_timestamp: i64,
-    measurement_index: u16,
-    current: u16,
-}
+use parquet::arrow::ArrowWriter as ParquetWriter;
+use arrow::array::{ArrayBuilder, UInt16Builder};
+use arrow::datatypes::{Field, Schema, DataType::UInt16};
+use arrow::record_batch::RecordBatch;
 
 pub(crate) fn get_data_from_fast_firmware(
     address: String,
@@ -30,7 +26,14 @@ pub(crate) fn get_data_from_fast_firmware(
     let running = Arc::new(AtomicBool::new(true));
     let running_cloned = running.clone();
 
-    let mut wtr = csv::Writer::from_path(path.join("fast_firmware.csv"))?;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("measurement_index", UInt16, false),
+        Field::new("current", UInt16, false),
+    ]));
+    let file = File::create(path.join("fast_firmware.parquet"))?;
+    let mut wtr = ParquetWriter::try_new(file, schema.clone(), None)?;
+    let mut index_array = UInt16Builder::new();
+    let mut current_array = UInt16Builder::new();
 
     let mut buf = [b' '; 256];
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
@@ -68,16 +71,28 @@ pub(crate) fn get_data_from_fast_firmware(
             //packet_header.copy_from_slice(&buf[0..8]);
             //let packet_timestamp = i64::from_le_bytes(packet_header);
             for msg in &mut msg_iter {
-                wtr.serialize(FirmwareFastMeasurement {
-                    //packet_timestamp,
-                    measurement_index: u16::from_le_bytes([msg[0], msg[1]]),
-                    current: u16::from_le_bytes([msg[2], msg[3]]),
-                })
-                .expect("Could not write Fast Firmware measurement");
+                index_array.append_value(
+                    u16::from_le_bytes([msg[0], msg[1]])
+                );
+                current_array.append_value(
+                    u16::from_le_bytes([msg[2], msg[3]])
+                );
+            }
+            if index_array.len() >= PARQUET_BATCH_ROW_COUNT {
+                let batch = RecordBatch::try_new(schema.clone(), vec![
+                    Arc::new(index_array.finish()),
+                    Arc::new(current_array.finish()),
+                ])?;
+                wtr.write(&batch)?;
             }
         }
         log::info!("Finishing thread");
-        Ok(DataThreadReturnVal::CsvWriter(wtr))
+        let batch = RecordBatch::try_new(schema.clone(), vec![
+            Arc::new(index_array.finish()),
+            Arc::new(current_array.finish()),
+        ])?;
+        wtr.write(&batch)?;
+        Ok(DataThreadReturnVal::ParquetWriter(wtr))
     });
     Ok((
         Box::new(move || {

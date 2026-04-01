@@ -8,7 +8,6 @@ mod visa_osc_communication;
 mod pico_osc_communication;
 
 use std::{fs, fs::File};
-use std::ops::Deref;
 use anyhow::{anyhow, Result};
 use bpaf::Bpaf;
 use parse_duration::parse;
@@ -18,17 +17,19 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
+use parquet::arrow::ArrowWriter;
 use subenum::subenum;
 use crate::pico_osc_communication::USBInstrumentWrapper;
 
 const IDLE_DURATION: Duration = Duration::from_secs(5);
+const PARQUET_BATCH_ROW_COUNT: usize = 1_000_000;
 
 pub(crate) type ShutdownFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
 
 pub(crate) enum DataThreadReturnVal {
-    CsvWriter(csv::Writer<File>),
+    ParquetWriter(ArrowWriter<File>),
     Instrument(USBInstrumentWrapper),
-    WriterAndExtraFile((csv::Writer<File>, PathBuf, String)),
+    WriterAndExtraFile((ArrowWriter<File>, PathBuf, String)),
 }
 pub(crate) type DataThread = JoinHandle<Result<DataThreadReturnVal>>;
 
@@ -276,12 +277,17 @@ fn main() -> Result<()> {
         let thread_ret = data_thread.join().expect("DataThread join failed")?;
         log::info!("Flushing Writer");
         match thread_ret {
-            DataThreadReturnVal::CsvWriter(mut wtr) => wtr.flush()?,
+            DataThreadReturnVal::ParquetWriter(mut wtr) => {
+                wtr.flush()?;
+                wtr.close()?;
+            },
             DataThreadReturnVal::Instrument(instr) => {
-                instr.csv_handler.deref().csv_writer.lock().expect("Could not lock writer").flush()?;
+                let parquet_handler = Arc::try_unwrap(instr.parquet_handler).expect("Could not unwrap from Arc");
+                parquet_handler.flush_and_close()?;
             }
             DataThreadReturnVal::WriterAndExtraFile((mut wtr, path, contents)) => {
                 wtr.flush()?;
+                wtr.close()?;
                 fs::write(path, contents)?;
             }
         }

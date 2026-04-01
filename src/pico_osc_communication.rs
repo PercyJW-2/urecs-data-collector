@@ -1,33 +1,39 @@
 use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 use anyhow::Result;
 use pico_sdk::prelude::*;
-use serde::Serialize;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use log::info;
+use parquet::arrow::ArrowWriter as ParquetWriter;
+use arrow::array::{Float64Array};
+use arrow::datatypes::{Field, Schema, DataType::Float64};
+use arrow::record_batch::RecordBatch;
+use parquet::basic::{Compression, ZstdLevel};
+use parquet::file::properties::WriterProperties;
 use pico_sdk::common::{PicoExtraOperations, PicoSigGenTrigSource, PicoSweepType, PicoWaveType, SetSigGenBuiltInV2Properties, SweepShotCount};
 
 pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>, sample_rate: u32, start_func_gen: bool) -> Result<(ShutdownFn, DataThread)> {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
-    let wtr_handler = CSVHandler::new(path.join("usb_osc_data.csv"))?;
+    let wtr_handler = ParquetHandler::new(path)?;
     let mut instrument_wrapper = USBInstrumentWrapper::new(Arc::new(wtr_handler), start_func_gen)?;
 
     let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
 
         while !read_start.load(Ordering::Acquire) {}
 
-        //instrument_wrapper.start(50_000_000)?;
         instrument_wrapper.start(sample_rate)?;
         while running.load(Ordering::Relaxed) {
             //thread::sleep(std::time::Duration::from_millis(1));
         }
         instrument_wrapper.stop();
         info!("Finishing Thread");
+        let unused = instrument_wrapper.parquet_handler.parquet_writer.lock().expect("Could not lock ParquetWriter");
+        drop(unused);
         Ok(DataThreadReturnVal::Instrument(instrument_wrapper))
     });
 
@@ -42,12 +48,12 @@ pub(crate) fn get_data_from_usb_osc(path: PathBuf, read_start: Arc<AtomicBool>, 
 }
 
 pub(crate) struct USBInstrumentWrapper {
-    pub(crate) csv_handler: Arc<CSVHandler>,
+    pub(crate) parquet_handler: Arc<ParquetHandler>,
     stream_device: PicoStreamingDevice
 }
 
 impl USBInstrumentWrapper {
-    fn new(csv_handler: Arc<CSVHandler>, start_func_gen: bool) -> Result<Self> {
+    fn new(parquet_handler: Arc<ParquetHandler>, start_func_gen: bool) -> Result<Self> {
         let enumerator = DeviceEnumerator::new();
         let enum_device = enumerator
             .enumerate()
@@ -78,10 +84,10 @@ impl USBInstrumentWrapper {
         
         stream_device.enable_channel(PicoChannel::A, PicoRange::X1_PROBE_2V, PicoCoupling::DC, -2.0);
         stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_10V, PicoCoupling::DC, -15.0);
-        stream_device.new_data.subscribe(csv_handler.clone());
+        stream_device.new_data.subscribe(parquet_handler.clone());
 
         Ok(Self {
-            csv_handler,
+            parquet_handler,
             stream_device,
         })
     }
@@ -96,37 +102,50 @@ impl USBInstrumentWrapper {
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct UsbOscMeasurement {
-    voltage: f64,
-    current: f64,
+#[derive(Debug)]
+pub(crate) struct ParquetHandler {
+    pub(crate) parquet_writer: Mutex<ParquetWriter<File>>,
+    pub(crate) schema: Arc<Schema>,
 }
 
-pub(crate) struct CSVHandler {
-    pub(crate) csv_writer: Mutex<csv::Writer<File>>,
-}
-
-impl CSVHandler {
+impl ParquetHandler {
     fn new(path: PathBuf) -> Result<Self> {
-        let wtr = csv::Writer::from_path(path)?;
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("voltage", Float64, false),
+            Field::new("current", Float64, false),
+        ]));
+        let file = File::create(path.join("usb_osc_data.parquet"))?;
+        let wtr_properties = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(ZstdLevel::try_new(15)?))
+            .build();
+        let wtr = ParquetWriter::try_new(file, schema.clone(), Some(wtr_properties))?;
         Ok(Self {
-            csv_writer: Mutex::new(wtr),
+            parquet_writer: Mutex::new(wtr),
+            schema,
         })
+    }
+
+    pub(crate) fn flush_and_close(self) -> Result<()> {
+        let mut wtr = self.parquet_writer.into_inner().expect("Parquet writer poisoned, other Errors not compatible with Sync Trait");
+        wtr.flush()?;
+        wtr.close()?;
+        Ok(())
     }
 }
 
-impl NewDataHandler for CSVHandler {
+impl NewDataHandler for ParquetHandler {
     fn handle_event(&self, value: &StreamingEvent) {
-        let mut wtr_lock = self.csv_writer.lock().expect("Could not lock the mutex");
-        let channel_a_data = &value.channels[&PicoChannel::A].scale_samples();
-        let channel_b_data = &value.channels[&PicoChannel::B].scale_samples();
-        channel_a_data.iter().zip(channel_b_data.iter()).for_each(|(channel_a, channel_b)| {
-            //println!("{}", *channel_b);
-            wtr_lock.serialize(UsbOscMeasurement {
-                current: *channel_a + 2.0, // value can be used directly, as 1V algins to 1A
-                voltage: *channel_b + 15.0, // voltage needs to be negated, as it is measured reversely
-            }).expect("Could not serialize USB Osc measurement");
-        });
+        let mut wtr_lock = self.parquet_writer.lock().expect("Could not lock the mutex");
+        let current_data: Float64Array = value.channels[&PicoChannel::A].scale_samples().iter().map(|crnt| {
+            *crnt + 2.0
+        }).collect();
+        let voltage_data: Float64Array = value.channels[&PicoChannel::B].scale_samples().iter().map(|vltg| {
+            *vltg + 15.0
+        }).collect();
+        let batch = RecordBatch::try_new(self.schema.clone(), vec![
+            Arc::new(current_data),
+            Arc::new(voltage_data)
+        ]).expect("Could not create record batch");
+        wtr_lock.write(&batch).expect("Could not write batch");
     }
 }
