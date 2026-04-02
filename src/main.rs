@@ -8,11 +8,13 @@ mod visa_osc_communication;
 mod pico_osc_communication;
 
 use std::{fs, fs::File};
+use std::fmt::Display;
 use anyhow::{anyhow, Result};
 use bpaf::Bpaf;
 use parse_duration::parse;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{sleep, JoinHandle};
@@ -32,6 +34,33 @@ pub(crate) enum DataThreadReturnVal {
     WriterAndExtraFile((ArrowWriter<File>, PathBuf, String)),
 }
 pub(crate) type DataThread = JoinHandle<Result<DataThreadReturnVal>>;
+
+#[derive(Debug, Clone)]
+pub(crate) enum OscilloscopeMsmtType {
+    UCurrent,
+    CurrentRanger
+}
+
+impl FromStr for OscilloscopeMsmtType {
+    type Err = String;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "ucurrent" => Ok(OscilloscopeMsmtType::UCurrent),
+            "currentranger" => Ok(OscilloscopeMsmtType::CurrentRanger),
+            _ => Err(format!("Unknown OscilloscopeMsmtType: {}", s)),
+        }
+    }
+}
+
+impl Display for OscilloscopeMsmtType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UCurrent => write!(f, "UCurrent"),
+            Self::CurrentRanger => write!(f, "CurrentRanger"),
+        }
+    }
+}
 
 #[derive(Bpaf, Debug, Clone)]
 #[bpaf(options)]
@@ -106,11 +135,15 @@ enum Sources {
     #[bpaf(command, adjacent)]
     UsbOscilloscope {
         /// Sample-rate that is used, default is 5MS/s
-        #[bpaf(short, long)]
-        sample_rate: Option<u32>,
+        #[bpaf(short, long, fallback(5000000), display_fallback)]
+        sample_rate: u32,
         /// use function-generator of picoscope
         #[bpaf(short, long)]
         use_function_gen: bool,
+        /// set measurement type to configure which calibration is used, Options are UCurrent or
+        /// CurrentRanger
+        #[bpaf(short, long, fallback(OscilloscopeMsmtType::UCurrent), display_fallback)]
+        measurement_type: OscilloscopeMsmtType,
     }
 }
 
@@ -219,14 +252,15 @@ fn main() -> Result<()> {
                     read_start.clone()
                 )
             }
-            Sources::UsbOscilloscope { sample_rate, use_function_gen } => {
+            Sources::UsbOscilloscope { sample_rate, use_function_gen, measurement_type } => {
                 launch_usb_oscilloscope(
                     &shutdown_funcs,
                     &mut data_threads,
                     path.to_path_buf(),
                     read_start.clone(),
-                    sample_rate.unwrap_or(5_000_000),
+                    sample_rate,
                     use_function_gen,
+                    measurement_type,
                 )
             }
         }
@@ -303,8 +337,9 @@ fn launch_usb_oscilloscope(
     read_start: Arc<AtomicBool>,
     sample_rate: u32,
     start_func_gen: bool,
+    msmt_type: OscilloscopeMsmtType,
 ) {
-    match pico_osc_communication::get_data_from_usb_osc(path, read_start, sample_rate, start_func_gen) {
+    match pico_osc_communication::get_data_from_usb_osc(path, read_start, sample_rate, start_func_gen, msmt_type) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
