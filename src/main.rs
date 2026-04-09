@@ -38,7 +38,8 @@ pub(crate) type DataThread = JoinHandle<Result<DataThreadReturnVal>>;
 #[derive(Debug, Clone)]
 pub(crate) enum OscilloscopeMsmtType {
     UCurrent,
-    CurrentRanger
+    CurrentRanger,
+    INA225,
 }
 
 impl FromStr for OscilloscopeMsmtType {
@@ -48,6 +49,7 @@ impl FromStr for OscilloscopeMsmtType {
         match s.to_lowercase().as_str() {
             "ucurrent" => Ok(OscilloscopeMsmtType::UCurrent),
             "currentranger" => Ok(OscilloscopeMsmtType::CurrentRanger),
+            "ina225" => Ok(OscilloscopeMsmtType::INA225),
             _ => Err(format!("Unknown OscilloscopeMsmtType: {}", s)),
         }
     }
@@ -58,6 +60,7 @@ impl Display for OscilloscopeMsmtType {
         match self {
             Self::UCurrent => write!(f, "UCurrent"),
             Self::CurrentRanger => write!(f, "CurrentRanger"),
+            Self::INA225 => write!(f, "INA225"),
         }
     }
 }
@@ -142,7 +145,7 @@ enum Sources {
         use_function_gen: bool,
         /// set measurement type to configure which calibration is used, Options are UCurrent or
         /// CurrentRanger
-        #[bpaf(short, long, fallback(OscilloscopeMsmtType::UCurrent), display_fallback)]
+        #[bpaf(short, long, fallback(OscilloscopeMsmtType::INA225), display_fallback)]
         measurement_type: OscilloscopeMsmtType,
     }
 }

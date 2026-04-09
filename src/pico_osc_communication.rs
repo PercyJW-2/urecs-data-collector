@@ -85,6 +85,7 @@ impl USBInstrumentWrapper {
         let (channel_a_range, channel_a_offset) = match msmt_type {
             OscilloscopeMsmtType::CurrentRanger => (PicoRange::X1_PROBE_2V, -2.0),
             OscilloscopeMsmtType::UCurrent => (PicoRange::X1_PROBE_200MV, -0.2),
+            OscilloscopeMsmtType::INA225 => (PicoRange::X1_PROBE_1V, -1.0)
         };
         stream_device.enable_channel(PicoChannel::A, channel_a_range, PicoCoupling::DC, channel_a_offset);
         stream_device.enable_channel(PicoChannel::B, PicoRange::X1_PROBE_10V, PicoCoupling::DC, -15.0);
@@ -127,7 +128,8 @@ impl ParquetHandler {
         let wtr = ParquetWriter::try_new(file, schema.clone(), Some(wtr_properties))?;
         let (data_multiplication_factor, data_offset_factor) = match msmt_type {
             OscilloscopeMsmtType::CurrentRanger => (1., 2.),
-            OscilloscopeMsmtType::UCurrent => (10., 0.2)
+            OscilloscopeMsmtType::UCurrent => (10., 0.2),
+            OscilloscopeMsmtType::INA225 => (1.0, 1.)
         };
         Ok(Self {
             parquet_writer: Mutex::new(wtr),
