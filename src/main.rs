@@ -118,6 +118,12 @@ enum Sources {
         /// Port on which Data is received
         #[bpaf(short, long)]
         data_port: u16,
+        /// Channel on which the ADC is reading - Default is 2 (Jetson Current)
+        #[bpaf(short, long, fallback(2), display_fallback)]
+        channel: u8,
+        /// Sample-rate that is used, default is 2kS/s
+        #[bpaf(short, long, fallback(2000), display_fallback)]
+        sample_rate: u16,
     },
     /// Reads data from a Shelly PlusPlugS
     #[subenum(ShellyPlug)]
@@ -227,7 +233,7 @@ fn main() -> Result<()> {
                     read_start.clone(),
                 );
             }
-            Sources::FastFirmware { address, data_port } => {
+            Sources::FastFirmware { address, data_port, channel , sample_rate} => {
                 launch_fast_firmware(
                     &shutdown_funcs,
                     &mut data_threads,
@@ -235,7 +241,9 @@ fn main() -> Result<()> {
                     data_port,
                     path.to_path_buf(),
                     read_start.clone(),
+                    channel,
                     duration + (IDLE_DURATION * 2),
+                    sample_rate,
                 );
             }
             Sources::ShellyPlug { address } => {
@@ -436,9 +444,11 @@ fn launch_fast_firmware(
     port: u16,
     path: PathBuf,
     read_start: Arc<AtomicBool>,
+    channel: u8,
     duration: Duration,
+    sample_rate: u16,
 ) {
-    match network_firmware_fast::get_data_from_fast_firmware(address, port, path, read_start, duration) {
+    match network_firmware_fast::get_data_from_fast_firmware(address, port, path, read_start, channel, duration, sample_rate) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()

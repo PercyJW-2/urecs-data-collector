@@ -17,7 +17,9 @@ pub(crate) fn get_data_from_fast_firmware(
     data_port: u16,
     path: PathBuf,
     read_start: Arc<AtomicBool>,
+    channel: u8,
     duration: Duration,
+    sample_rate: u16,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{address}:{data_port}"))?;
@@ -40,7 +42,7 @@ pub(crate) fn get_data_from_fast_firmware(
         while !read_start.load(Ordering::Acquire) {}
 
         // starting datastream
-        socket.send(format!("go 2 {}\n", duration.as_micros()).as_bytes())?;
+        socket.send(format!("go {} {} {}\n", channel, duration.as_micros(), sample_rate).as_bytes())?;
         while running.load(Ordering::Relaxed) {
             match socket.recv(&mut buf) {
                 Ok(len) => {
