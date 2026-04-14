@@ -65,6 +65,42 @@ impl Display for OscilloscopeMsmtType {
     }
 }
 
+#[derive(Debug, Clone)]
+enum OscilloscopeProbeFactor {
+    X1,
+    X10,
+}
+
+impl FromStr for OscilloscopeProbeFactor {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "x1" => Ok(OscilloscopeProbeFactor::X1),
+            "x10" => Ok(OscilloscopeProbeFactor::X10),
+            _ => Err(format!("Unknown OscilloscopeProbeFactor: {}", s)),
+        }
+    }
+}
+
+impl Into<f64> for OscilloscopeProbeFactor {
+    fn into(self) -> f64 {
+        match self {
+            Self::X1 => 1.0,
+            Self::X10 => 10.0,
+        }
+    }
+}
+
+impl Display for OscilloscopeProbeFactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OscilloscopeProbeFactor::X1 => write!(f, "X1"),
+            OscilloscopeProbeFactor::X10 => write!(f, "X10"),
+        }
+    }
+}
+
 #[derive(Bpaf, Debug, Clone)]
 #[bpaf(options)]
 struct Arguments {
@@ -153,6 +189,12 @@ enum Sources {
         /// CurrentRanger
         #[bpaf(short, long, fallback(OscilloscopeMsmtType::INA225), display_fallback)]
         measurement_type: OscilloscopeMsmtType,
+        /// Selects the probe factor used, its either X1 or X10, while the default is X10
+        #[bpaf(short, long, fallback(OscilloscopeProbeFactor::X10), display_fallback)]
+        current_channel_probe_factor: OscilloscopeProbeFactor,
+        /// Selects the probe factor used, its either X1 or X10, while the default is X10
+        #[bpaf(short, long, fallback(OscilloscopeProbeFactor::X10), display_fallback)]
+        voltage_channel_probe_factor: OscilloscopeProbeFactor,
     }
 }
 
@@ -263,7 +305,13 @@ fn main() -> Result<()> {
                     read_start.clone()
                 )
             }
-            Sources::UsbOscilloscope { sample_rate, use_function_gen, measurement_type } => {
+            Sources::UsbOscilloscope {
+                sample_rate,
+                use_function_gen,
+                measurement_type,
+                current_channel_probe_factor,
+                voltage_channel_probe_factor,
+            } => {
                 launch_usb_oscilloscope(
                     &shutdown_funcs,
                     &mut data_threads,
@@ -272,6 +320,8 @@ fn main() -> Result<()> {
                     sample_rate,
                     use_function_gen,
                     measurement_type,
+                    current_channel_probe_factor,
+                    voltage_channel_probe_factor,
                 )
             }
         }
@@ -349,8 +399,18 @@ fn launch_usb_oscilloscope(
     sample_rate: u32,
     start_func_gen: bool,
     msmt_type: OscilloscopeMsmtType,
+    current_channel_probe_factor: OscilloscopeProbeFactor,
+    voltage_channel_probe_factor: OscilloscopeProbeFactor,
 ) {
-    match pico_osc_communication::get_data_from_usb_osc(path, read_start, sample_rate, start_func_gen, msmt_type) {
+    match pico_osc_communication::get_data_from_usb_osc(
+        path,
+        read_start,
+        sample_rate,
+        start_func_gen,
+        msmt_type,
+        current_channel_probe_factor,
+        voltage_channel_probe_factor
+    ) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
