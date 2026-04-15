@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use log::info;
+use log::{error, info};
 use parquet::arrow::ArrowWriter as ParquetWriter;
 use arrow::array::{Float64Array};
 use arrow::datatypes::{Field, Schema, DataType::Float64};
@@ -128,7 +128,8 @@ impl USBInstrumentWrapper {
     }
 
     fn start(&mut self, sample_rate: u32) -> Result<()> {
-        self.stream_device.start(sample_rate)?;
+        let actual_sample_rate= self.stream_device.start(sample_rate)?;
+        info!("Recording with sample rate {}", actual_sample_rate);
         Ok(())
     }
 
