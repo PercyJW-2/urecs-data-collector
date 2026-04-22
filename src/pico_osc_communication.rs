@@ -1,5 +1,18 @@
-use crate::{DataThread, DataThreadReturnVal, OscilloscopeMsmtType, OscilloscopeProbeFactor, ShutdownFn};
+use crate::{
+    DataThread, DataThreadReturnVal, OscilloscopeMsmtType, OscilloscopeProbeFactor, ShutdownFn,
+};
 use anyhow::Result;
+use arrow::array::Float64Array;
+use arrow::datatypes::{DataType::Float64, Field, Schema};
+use arrow::record_batch::RecordBatch;
+use log::{error, info};
+use parquet::arrow::ArrowWriter as ParquetWriter;
+use parquet::basic::{Compression, ZstdLevel};
+use parquet::file::properties::WriterProperties;
+use pico_sdk::common::{
+    PicoExtraOperations, PicoSigGenTrigSource, PicoSweepType, PicoWaveType,
+    SetSigGenBuiltInV2Properties, SweepShotCount,
+};
 use pico_sdk::prelude::*;
 use std::fs::File;
 use std::path::PathBuf;
@@ -8,14 +21,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
-use log::{error, info};
-use parquet::arrow::ArrowWriter as ParquetWriter;
-use arrow::array::{Float64Array};
-use arrow::datatypes::{Field, Schema, DataType::Float64};
-use arrow::record_batch::RecordBatch;
-use parquet::basic::{Compression, ZstdLevel};
-use parquet::file::properties::WriterProperties;
-use pico_sdk::common::{PicoExtraOperations, PicoSigGenTrigSource, PicoSweepType, PicoWaveType, SetSigGenBuiltInV2Properties, SweepShotCount};
 
 pub(crate) fn get_data_from_usb_osc(
     path: PathBuf,
@@ -40,11 +45,10 @@ pub(crate) fn get_data_from_usb_osc(
         start_func_gen,
         msmt_type,
         current_channel_probe_factor,
-        voltage_channel_probe_factor
+        voltage_channel_probe_factor,
     )?;
 
     let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
-
         while !read_start.load(Ordering::Acquire) {}
 
         instrument_wrapper.start(sample_rate)?;
@@ -55,7 +59,11 @@ pub(crate) fn get_data_from_usb_osc(
         sleep(Duration::from_secs(5));
         instrument_wrapper.stop();
         info!("Finishing Thread");
-        let unused = instrument_wrapper.parquet_handler.parquet_writer.lock().expect("Could not lock ParquetWriter");
+        let unused = instrument_wrapper
+            .parquet_handler
+            .parquet_writer
+            .lock()
+            .expect("Could not lock ParquetWriter");
         drop(unused);
         Ok(DataThreadReturnVal::Instrument(instrument_wrapper))
     });
@@ -66,21 +74,23 @@ pub(crate) fn get_data_from_usb_osc(
             running_clone.store(false, Ordering::Relaxed);
             Ok(())
         }),
-        data_thread
+        data_thread,
     ))
 }
 
 pub(crate) struct USBInstrumentWrapper {
     pub(crate) parquet_handler: Arc<ParquetHandler>,
-    stream_device: PicoStreamingDevice
+    stream_device: PicoStreamingDevice,
 }
 
 impl USBInstrumentWrapper {
-    fn new(parquet_handler: Arc<ParquetHandler>,
-           start_func_gen: bool,
-           msmt_type: OscilloscopeMsmtType,
-           current_probe_factor: OscilloscopeProbeFactor,
-           voltage_probe_factor: OscilloscopeProbeFactor) -> Result<Self> {
+    fn new(
+        parquet_handler: Arc<ParquetHandler>,
+        start_func_gen: bool,
+        msmt_type: OscilloscopeMsmtType,
+        current_probe_factor: OscilloscopeProbeFactor,
+        voltage_probe_factor: OscilloscopeProbeFactor,
+    ) -> Result<Self> {
         let enumerator = DeviceEnumerator::new();
         let enum_device = enumerator
             .enumerate()
@@ -110,19 +120,41 @@ impl USBInstrumentWrapper {
         }
 
         let (channel_a_range, channel_a_offset) = match (msmt_type, current_probe_factor) {
-            (OscilloscopeMsmtType::CurrentRanger, OscilloscopeProbeFactor::X1) => (PicoRange::X1_PROBE_2V, -2.0),
-            (OscilloscopeMsmtType::CurrentRanger, OscilloscopeProbeFactor::X10) => (PicoRange::X1_PROBE_200MV, -0.2),
-            (OscilloscopeMsmtType::UCurrent, OscilloscopeProbeFactor::X1) => (PicoRange::X1_PROBE_200MV, -0.2),
-            (OscilloscopeMsmtType::UCurrent, OscilloscopeProbeFactor::X10) => (PicoRange::X1_PROBE_20MV, -0.02),
-            (OscilloscopeMsmtType::INA225, OscilloscopeProbeFactor::X1) => (PicoRange::X1_PROBE_1V, -1.0),
-            (OscilloscopeMsmtType::INA225, OscilloscopeProbeFactor::X10) => (PicoRange::X1_PROBE_100MV, -0.1),
+            (OscilloscopeMsmtType::CurrentRanger, OscilloscopeProbeFactor::X1) => {
+                (PicoRange::X1_PROBE_2V, -2.0)
+            }
+            (OscilloscopeMsmtType::CurrentRanger, OscilloscopeProbeFactor::X10) => {
+                (PicoRange::X1_PROBE_200MV, -0.2)
+            }
+            (OscilloscopeMsmtType::UCurrent, OscilloscopeProbeFactor::X1) => {
+                (PicoRange::X1_PROBE_200MV, -0.2)
+            }
+            (OscilloscopeMsmtType::UCurrent, OscilloscopeProbeFactor::X10) => {
+                (PicoRange::X1_PROBE_20MV, -0.02)
+            }
+            (OscilloscopeMsmtType::INA225, OscilloscopeProbeFactor::X1) => {
+                (PicoRange::X1_PROBE_1V, -1.0)
+            }
+            (OscilloscopeMsmtType::INA225, OscilloscopeProbeFactor::X10) => {
+                (PicoRange::X1_PROBE_100MV, -0.1)
+            }
         };
         let (channel_b_range, channel_b_offset) = match voltage_probe_factor {
             OscilloscopeProbeFactor::X1 => (PicoRange::X1_PROBE_10V, -15.0),
             OscilloscopeProbeFactor::X10 => (PicoRange::X1_PROBE_1V, -1.5),
         };
-        stream_device.enable_channel(PicoChannel::A, channel_a_range, PicoCoupling::DC, channel_a_offset);
-        stream_device.enable_channel(PicoChannel::B, channel_b_range, PicoCoupling::DC, channel_b_offset);
+        stream_device.enable_channel(
+            PicoChannel::A,
+            channel_a_range,
+            PicoCoupling::DC,
+            channel_a_offset,
+        );
+        stream_device.enable_channel(
+            PicoChannel::B,
+            channel_b_range,
+            PicoCoupling::DC,
+            channel_b_offset,
+        );
         stream_device.new_data.subscribe(parquet_handler.clone());
 
         Ok(Self {
@@ -132,7 +164,7 @@ impl USBInstrumentWrapper {
     }
 
     fn start(&mut self, sample_rate: u32) -> Result<()> {
-        let actual_sample_rate= self.stream_device.start(sample_rate)?;
+        let actual_sample_rate = self.stream_device.start(sample_rate)?;
         info!("Recording with sample rate {}", actual_sample_rate);
         Ok(())
     }
@@ -154,10 +186,12 @@ pub(crate) struct ParquetHandler {
 }
 
 impl ParquetHandler {
-    fn new(path: PathBuf,
-           msmt_type: OscilloscopeMsmtType,
-           current_probe_factor: OscilloscopeProbeFactor,
-           voltage_probe_factor: OscilloscopeProbeFactor) -> Result<Self> {
+    fn new(
+        path: PathBuf,
+        msmt_type: OscilloscopeMsmtType,
+        current_probe_factor: OscilloscopeProbeFactor,
+        voltage_probe_factor: OscilloscopeProbeFactor,
+    ) -> Result<Self> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("voltage", Float64, false),
             Field::new("current", Float64, false),
@@ -170,7 +204,7 @@ impl ParquetHandler {
         let (data_multiplication_factor, data_offset_factor) = match msmt_type {
             OscilloscopeMsmtType::CurrentRanger => (1., 2.),
             OscilloscopeMsmtType::UCurrent => (10., 0.2),
-            OscilloscopeMsmtType::INA225 => (1.0, 1.)
+            OscilloscopeMsmtType::INA225 => (1.0, 1.),
         };
         Ok(Self {
             parquet_writer: Mutex::new(wtr),
@@ -183,7 +217,10 @@ impl ParquetHandler {
     }
 
     pub(crate) fn flush_and_close(self) -> Result<()> {
-        let mut wtr = self.parquet_writer.into_inner().expect("Parquet writer poisoned, other Errors not compatible with Sync Trait");
+        let mut wtr = self
+            .parquet_writer
+            .into_inner()
+            .expect("Parquet writer poisoned, other Errors not compatible with Sync Trait");
         wtr.flush()?;
         wtr.close()?;
         Ok(())
@@ -192,18 +229,28 @@ impl ParquetHandler {
 
 impl NewDataHandler for ParquetHandler {
     fn handle_event(&self, value: &StreamingEvent) {
-        info!("Got Data {}", value.length);
-        let mut wtr_lock = self.parquet_writer.lock().expect("Could not lock the mutex");
-        let current_data: Float64Array = value.channels[&PicoChannel::A].scale_samples().iter().map(|crnt| {
-            ((*crnt * self.current_probe_factor) + self.data_offset_factor) * self.data_multiplication_factor
-        }).collect();
-        let voltage_data: Float64Array = value.channels[&PicoChannel::B].scale_samples().iter().map(|vltg| {
-            (*vltg * self.voltage_probe_factor) + 15.0
-        }).collect();
-        let batch = RecordBatch::try_new(self.schema.clone(), vec![
-            Arc::new(voltage_data),
-            Arc::new(current_data)
-        ]).expect("Could not create record batch");
+        let mut wtr_lock = self
+            .parquet_writer
+            .lock()
+            .expect("Could not lock the mutex");
+        let current_data: Float64Array = value.channels[&PicoChannel::A]
+            .scale_samples()
+            .iter()
+            .map(|crnt| {
+                ((*crnt * self.current_probe_factor) + self.data_offset_factor)
+                    * self.data_multiplication_factor
+            })
+            .collect();
+        let voltage_data: Float64Array = value.channels[&PicoChannel::B]
+            .scale_samples()
+            .iter()
+            .map(|vltg| (*vltg * self.voltage_probe_factor) + 15.0)
+            .collect();
+        let batch = RecordBatch::try_new(
+            self.schema.clone(),
+            vec![Arc::new(voltage_data), Arc::new(current_data)],
+        )
+        .expect("Could not create record batch");
         wtr_lock.write(&batch).expect("Could not write batch");
     }
 }
