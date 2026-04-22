@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::thread::sleep;
+use std::time::Duration;
 use log::{error, info};
 use parquet::arrow::ArrowWriter as ParquetWriter;
 use arrow::array::{Float64Array};
@@ -49,6 +51,8 @@ pub(crate) fn get_data_from_usb_osc(
         while running.load(Ordering::Relaxed) {
             //thread::sleep(std::time::Duration::from_millis(1));
         }
+        info!("Waiting for final data");
+        sleep(Duration::from_secs(5));
         instrument_wrapper.stop();
         info!("Finishing Thread");
         let unused = instrument_wrapper.parquet_handler.parquet_writer.lock().expect("Could not lock ParquetWriter");
@@ -135,6 +139,7 @@ impl USBInstrumentWrapper {
 
     fn stop(&self) {
         self.stream_device.stop();
+        self.stream_device.wait_for_state_settle();
     }
 }
 
@@ -187,6 +192,7 @@ impl ParquetHandler {
 
 impl NewDataHandler for ParquetHandler {
     fn handle_event(&self, value: &StreamingEvent) {
+        info!("Got Data {}", value.length);
         let mut wtr_lock = self.parquet_writer.lock().expect("Could not lock the mutex");
         let current_data: Float64Array = value.channels[&PicoChannel::A].scale_samples().iter().map(|crnt| {
             ((*crnt * self.current_probe_factor) + self.data_offset_factor) * self.data_multiplication_factor
