@@ -5,7 +5,7 @@ use anyhow::Result;
 use arrow::array::Float64Array;
 use arrow::datatypes::{DataType::Float64, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use log::{error, info};
+use log::info;
 use parquet::arrow::ArrowWriter as ParquetWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
