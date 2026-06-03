@@ -108,9 +108,15 @@ struct Arguments {
     /// If not provided, the current folder will be used.
     #[bpaf(short, long)]
     storage_path: Option<String>,
-    /// Duration, how long to measure
+    /// Duration, how long to measure. Take a look at the (parse_duration)[https://docs.rs/parse_duration/latest/parse_duration/] crate for formatting details
     #[bpaf(short, long, argument::<String>("DURATION"), map(|dur| parse(dur.as_str())))]
     duration: Result<Duration, parse::Error>,
+    /// Duration, how long to measure before the actual measurement. Uses parse_duration crate formatting. Default is 5 Seconds
+    #[bpaf(short('b'), long, argument::<String>("DURATION"), map(|dur| parse(dur.as_str())), fallback(Ok(IDLE_DURATION)))]
+    pre_duration: Result<Duration, parse::Error>,
+    /// Duration, how long to measure after the actual measurement. Uses parse_duration crate formatting. Default is 5 Seconds
+    #[bpaf(short('e'), long, argument::<String>("DURATION"), map(|dur| parse(dur.as_str())), fallback(Ok(IDLE_DURATION)))]
+    post_duration: Result<Duration, parse::Error>,
     /// Optional Command that is executed after the measurement begins
     #[bpaf(short, long)]
     command: Option<String>,
@@ -251,6 +257,8 @@ fn main() -> Result<()> {
     // start data acquisition
     // add 10 seconds to runtime to create idle edge at the end and start
     let duration = args.duration?;
+    let pre_duration = args.pre_duration?;
+    let post_duration = args.post_duration?;
     let mut data_threads = Vec::new();
     let read_start = Arc::new(AtomicBool::new(false));
     for source in args.sources {
@@ -330,7 +338,7 @@ fn main() -> Result<()> {
     log::info!("Starting measurement");
     read_start.store(true, Ordering::Release);
 
-    sleep(IDLE_DURATION);
+    sleep(pre_duration);
     let mut command = None;
     if let Some(cmd) = args.command {
         log::info!("Running command: {}", cmd);
@@ -341,7 +349,7 @@ fn main() -> Result<()> {
             .spawn()?);
     }
 
-    sleep(duration + IDLE_DURATION);
+    sleep(duration + post_duration);
 
     if let Some(mut cmd) = command {
         log::info!("Waiting for command to finish");
