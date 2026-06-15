@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use arrow::array::{ArrayBuilder, ArrayRef, UInt32Builder, UInt64Builder};
 use arrow::datatypes::DataType::{UInt32, UInt64};
 use arrow::record_batch::RecordBatch;
@@ -39,9 +39,13 @@ pub(crate) fn get_data_from_jetson(
     let mut current_array = UInt32Builder::new();
     let mut voltage_array = UInt32Builder::new();
 
+    let mut last_current: u32 = 0;
+    let mut last_voltage: u32 = 0;
+
     let mut buf = [b' '; 512];
     let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Acquire) {}
+        let start_time = Instant::now();
 
         // starting datastream
         socket.send("go\n".as_bytes())?;
@@ -70,8 +74,10 @@ pub(crate) fn get_data_from_jetson(
             let mut iterator = msg_string.lines().next().expect("There should be at least one line")
                 .splitn(3, ',');
             time_array.append_value(iterator.next().expect("Received no data").parse()?);
-            current_array.append_value(iterator.next().expect("Received no current").parse()?);
-            voltage_array.append_value(iterator.next().expect("Received no voltage").parse()?);
+            last_current = iterator.next().expect("Received no current").parse()?;
+            current_array.append_value(last_current);
+            last_voltage = iterator.next().expect("Received no voltage").parse()?;
+            voltage_array.append_value(last_voltage);
             if time_array.len() >= PARQUET_BATCH_ROW_COUNT {
                 let batch = RecordBatch::try_new(schema.clone(), vec![
                     Arc::new(time_array.finish()),
@@ -82,6 +88,9 @@ pub(crate) fn get_data_from_jetson(
             }
         }
         log::info!("Finishing thread");
+        time_array.append_value(start_time.elapsed().as_micros() as u64);
+        current_array.append_value(last_current);
+        voltage_array.append_value(last_voltage);
         let batch = RecordBatch::try_new(schema.clone(), vec![
             Arc::new(time_array.finish()),
             Arc::new(current_array.finish()),
