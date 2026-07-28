@@ -1,6 +1,4 @@
-use crate::{
-    DataThread, DataThreadReturnVal, OscilloscopeMsmtType, OscilloscopeProbeFactor, ShutdownFn,
-};
+use crate::{DataThread, DataThreadReturnVal, MsmtEnvironment, OscilloscopeMsmtType, OscilloscopeProbeFactor, ShutdownFn};
 use anyhow::Result;
 use arrow::array::Float64Array;
 use arrow::datatypes::{DataType::Float64, Field, Schema};
@@ -28,6 +26,7 @@ pub(crate) fn get_data_from_usb_osc(
     sample_rate: u32,
     start_func_gen: bool,
     msmt_type: OscilloscopeMsmtType,
+    msmt_environment: MsmtEnvironment,
     current_channel_probe_factor: OscilloscopeProbeFactor,
     voltage_channel_probe_factor: OscilloscopeProbeFactor,
 ) -> Result<(ShutdownFn, DataThread)> {
@@ -37,6 +36,10 @@ pub(crate) fn get_data_from_usb_osc(
     let wtr_handler = ParquetHandler::new(
         path,
         msmt_type.clone(),
+        match msmt_environment {
+            MsmtEnvironment::Jetson => 15.0,
+            MsmtEnvironment::M2 => 2.0,
+        },
         current_channel_probe_factor.clone(),
         voltage_channel_probe_factor.clone(),
     )?;
@@ -44,6 +47,7 @@ pub(crate) fn get_data_from_usb_osc(
         Arc::new(wtr_handler),
         start_func_gen,
         msmt_type,
+        msmt_environment,
         current_channel_probe_factor,
         voltage_channel_probe_factor,
     )?;
@@ -88,6 +92,7 @@ impl USBInstrumentWrapper {
         parquet_handler: Arc<ParquetHandler>,
         start_func_gen: bool,
         msmt_type: OscilloscopeMsmtType,
+        msmt_environment: MsmtEnvironment,
         current_probe_factor: OscilloscopeProbeFactor,
         voltage_probe_factor: OscilloscopeProbeFactor,
     ) -> Result<Self> {
@@ -139,9 +144,11 @@ impl USBInstrumentWrapper {
                 (PicoRange::X1_PROBE_100MV, -0.1)
             }
         };
-        let (channel_b_range, channel_b_offset) = match voltage_probe_factor {
-            OscilloscopeProbeFactor::X1 => (PicoRange::X1_PROBE_10V, -15.0),
-            OscilloscopeProbeFactor::X10 => (PicoRange::X1_PROBE_1V, -1.5),
+        let (channel_b_range, channel_b_offset) = match (voltage_probe_factor, msmt_environment) {
+            (OscilloscopeProbeFactor::X1, MsmtEnvironment::Jetson) => (PicoRange::X1_PROBE_10V, -15.0),
+            (OscilloscopeProbeFactor::X10, MsmtEnvironment::Jetson) => (PicoRange::X1_PROBE_1V, -1.5),
+            (OscilloscopeProbeFactor::X1, MsmtEnvironment::M2) => (PicoRange::X1_PROBE_2V, -2.0),
+            (OscilloscopeProbeFactor::X10, MsmtEnvironment::M2) => (PicoRange::X1_PROBE_200MV, -0.2),
         };
         stream_device.enable_channel(
             PicoChannel::A,
@@ -181,6 +188,7 @@ pub(crate) struct ParquetHandler {
     pub(crate) schema: Arc<Schema>,
     data_multiplication_factor: f64,
     data_offset_factor: f64,
+    voltage_offset_factor: f64,
     current_probe_factor: f64,
     voltage_probe_factor: f64,
 }
@@ -189,6 +197,7 @@ impl ParquetHandler {
     fn new(
         path: PathBuf,
         msmt_type: OscilloscopeMsmtType,
+        voltage_offset_factor: f64,
         current_probe_factor: OscilloscopeProbeFactor,
         voltage_probe_factor: OscilloscopeProbeFactor,
     ) -> Result<Self> {
@@ -211,6 +220,7 @@ impl ParquetHandler {
             schema,
             data_multiplication_factor,
             data_offset_factor,
+            voltage_offset_factor,
             current_probe_factor: current_probe_factor.into(),
             voltage_probe_factor: voltage_probe_factor.into(),
         })
@@ -244,7 +254,7 @@ impl NewDataHandler for ParquetHandler {
         let voltage_data: Float64Array = value.channels[&PicoChannel::B]
             .scale_samples()
             .iter()
-            .map(|vltg| (*vltg * self.voltage_probe_factor) + 15.0)
+            .map(|vltg| (*vltg * self.voltage_probe_factor) + self.voltage_offset_factor)
             .collect();
         let batch = RecordBatch::try_new(
             self.schema.clone(),

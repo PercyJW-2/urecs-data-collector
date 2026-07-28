@@ -66,6 +66,33 @@ impl Display for OscilloscopeMsmtType {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) enum MsmtEnvironment {
+    Jetson,
+    M2
+}
+
+impl FromStr for MsmtEnvironment {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "jetson" => Ok(Self::Jetson),
+            "m.2" => Ok(Self::M2),
+            _ => Err(format!("Unknown MsmtEnvironment: {}", s)),
+        }
+    }
+}
+
+impl Display for MsmtEnvironment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Jetson => write!(f, "Jetson"),
+            Self::M2 => write!(f, "M.2"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum OscilloscopeProbeFactor {
     X1,
     X10,
@@ -195,6 +222,9 @@ enum Sources {
         /// CurrentRanger
         #[bpaf(short, long, fallback(OscilloscopeMsmtType::INA225), display_fallback)]
         measurement_type: OscilloscopeMsmtType,
+        /// set measured object to configure correct probe settings
+        #[bpaf(short, long, fallback(MsmtEnvironment::Jetson), display_fallback)]
+        msmt_environment: MsmtEnvironment,
         /// Selects the probe factor used, its either X1 or X10, while the default is X10
         #[bpaf(short, long, fallback(OscilloscopeProbeFactor::X10), display_fallback)]
         current_channel_probe_factor: OscilloscopeProbeFactor,
@@ -317,6 +347,7 @@ fn main() -> Result<()> {
                 sample_rate,
                 use_function_gen,
                 measurement_type,
+                msmt_environment,
                 current_channel_probe_factor,
                 voltage_channel_probe_factor,
             } => {
@@ -328,6 +359,7 @@ fn main() -> Result<()> {
                     sample_rate,
                     use_function_gen,
                     measurement_type,
+                    msmt_environment,
                     current_channel_probe_factor,
                     voltage_channel_probe_factor,
                 )
@@ -407,6 +439,7 @@ fn launch_usb_oscilloscope(
     sample_rate: u32,
     start_func_gen: bool,
     msmt_type: OscilloscopeMsmtType,
+    msmt_environment: MsmtEnvironment,
     current_channel_probe_factor: OscilloscopeProbeFactor,
     voltage_channel_probe_factor: OscilloscopeProbeFactor,
 ) {
@@ -416,6 +449,7 @@ fn launch_usb_oscilloscope(
         sample_rate,
         start_func_gen,
         msmt_type,
+        msmt_environment,
         current_channel_probe_factor,
         voltage_channel_probe_factor
     ) {
