@@ -5,19 +5,17 @@ edition = "2024"
 
 [dependencies]
 bpaf = { version = "0.9.20", features = ["derive", "autocomplete", "bright-color"] }
-quick-xml = { version = "0.39", features = ["serialize"] }
+quick-xml = { version = "0.41.0", features = ["serialize"] }
 subenum = "1.1.2"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 anyhow = "1.0.98"
 serde = { version = "1.0.219", features = ["derive"] }
-visa-rs = { version = "0.6.2", optional = true }
 pico-sdk = { git = "https://github.com/percyjw-2/pico-sdk.git", rev = "a864a90"}
 log = "0.4.28"
 simple_logger = "5.1.0"
 parse_duration = "2.1.1"
 shell-words = "1.1.1"
-parquet = "58.1.0"
-arrow = "58.1.0"
-
-[features]
-visa = ["dep:visa-rs"]
+parquet = "59.1.0"
+arrow = "59.1.0"
+tekhsi_rs = { version = "0.1.1", default-features = false }
+futures = "0.3.33"

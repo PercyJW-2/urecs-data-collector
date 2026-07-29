@@ -3,9 +3,8 @@ mod network_firmware_fast;
 mod network_jetson;
 mod network_shelly_plug;
 mod utils;
-#[cfg(feature = "visa")]
-mod visa_osc_communication;
 mod pico_osc_communication;
+mod tekhsi_osc_communication;
 
 use std::{fs, fs::File};
 use std::fmt::Display;
@@ -207,6 +206,9 @@ enum Sources {
     #[subenum(Oscilloscope)]
     #[bpaf(command, adjacent)]
     Oscilloscope {
+        /// Network Address of the Tektronix Oscilloscope
+        #[bpaf(short, long)]
+        address: String,
     },
     /// Reads data from USB Oscilloscope
     #[subenum(UsbOscilloscope)]
@@ -335,8 +337,9 @@ fn main() -> Result<()> {
                     read_start.clone(),
                 )
             }
-            Sources::Oscilloscope {} => {
+            Sources::Oscilloscope { address } => {
                 launch_oscilloscope(
+                    address,
                     &shutdown_funcs,
                     &mut data_threads,
                     path.to_path_buf(),
@@ -466,14 +469,18 @@ fn launch_usb_oscilloscope(
     }
 }
 
-#[cfg(feature = "visa")]
 fn launch_oscilloscope(
+    address: String,
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
     path_buf: PathBuf,
     read_start: Arc<AtomicBool>,
 ) {
-    match visa_osc_communication::get_data_from_osc(path_buf, read_start) {
+    match tekhsi_osc_communication::get_data_from_tek_hsi_oscilloscope(
+        address,
+        read_start,
+        path_buf
+    ) {
         Ok((shutdown_func, data_thread)) => {
             shutdown_funcs
                 .lock()
@@ -482,19 +489,9 @@ fn launch_oscilloscope(
             data_threads.push(data_thread);
         }
         Err(error) => {
-            log::error!("Failed to set up Oscilloscope: {}", error);
+            log::error!("Failed to setup TekHSI Communication: {error}");
         }
     }
-}
-
-#[cfg(not(feature = "visa"))]
-fn launch_oscilloscope(
-    _shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    _data_threads: &mut Vec<DataThread>,
-    _path_buf: PathBuf,
-    _read_start: Arc<AtomicBool>,
-) {
-    log::error!("Visa feature is not compiled, to use this please recompile it with `--features visa`.");
 }
 
 fn launch_shelly_plug(
