@@ -32,7 +32,7 @@ pub(crate) fn get_data_from_tek_hsi_oscilloscope(
     let file = File::create(path.join("tek_hsi.parquet"))?;
     let wtr = ArrowWriter::try_new(file, schema.clone(), None)?;
 
-    let data_thread = thread::spawn(move || -> anyhow::Result<(DataThreadReturnVal)> {
+    let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
         while !read_start.load(Ordering::Relaxed) {}
 
         block_on(transmit_data(running_clone, client, symbols[0].clone(), wtr, schema))
