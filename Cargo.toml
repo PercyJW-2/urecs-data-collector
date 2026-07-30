@@ -19,3 +19,7 @@ parquet = "59.1.0"
 arrow = "59.1.0"
 tekhsi_rs = { version = "0.1.1", default-features = false }
 futures = "0.3.33"
+visa-rs = { version = "0.6.2", optional = true}
+
+[features]
+visa = ["visa-rs"]

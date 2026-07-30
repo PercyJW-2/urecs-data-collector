@@ -8,6 +8,7 @@ use arrow::array::Float64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use futures::executor::block_on;
+use log::{info};
 use parquet::arrow::ArrowWriter;
 use tekhsi_rs::errors::TekHsiError;
 use tekhsi_rs::{SubscribeOptions, TekHsiClient};
@@ -17,9 +18,12 @@ use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 
 pub(crate) fn get_data_from_tek_hsi_oscilloscope(
     address: String,
+    sample_rate: u32,
     read_start: Arc<AtomicBool>,
     path: PathBuf,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
+    setup_scope(sample_rate)?;
+
     let (client, symbols) =
         block_on(initialize_scope(format!("{address}:5000").as_str()))?;
 
@@ -46,6 +50,56 @@ pub(crate) fn get_data_from_tek_hsi_oscilloscope(
         }),
         data_thread,
     ))
+}
+
+#[cfg(feature = "visa")]
+fn setup_scope(sample_rate: u32) -> anyhow::Result<()> {
+    use visa_rs::prelude::*;
+    use visa_rs::{AsResourceManager, ResID};
+    use std::io::{BufRead, BufReader, Write};
+
+    let rm: DefaultRM = DefaultRM::new()?;
+    let res_id = ResID::from_string("?*".parse()?).unwrap();
+    let resource = rm.find_res(&res_id)?;
+    let instr = rm.open(&resource, AccessMode::NO_LOCK, TIMEOUT_INFINITE)?;
+
+    let mut buf_reader = BufReader::new(&instr);
+    let mut buf = String::new();
+
+    // enable correct channel
+    (&instr).write_all(b"SELECT:CH1 ON; CH2 OFF; CH3 OFF; CH4 OFF")?;
+    (&instr).write_all(b"SELECT:CH1?;CH2?;CH3?;CH4?")?;
+    buf_reader.read_line(&mut buf)?;
+    info!("{buf}");
+    // Setup samplerate
+    (&instr).write_fmt(
+        format_args!(
+            "HORIZONTAL:MODE MANUAL;:HORIZONTAL:SAMPLERATE {};:HORIZONTAL:RECORDLENGTH {}",
+            sample_rate,
+            1_000_000
+        )
+    )?;
+    (&instr).write_all(b"HORIZONTAL:SAMPLERATE?;:HORIZONTAL:RECORDLENGTH?")?;
+    buf.clear();
+    buf_reader.read_line(&mut buf)?;
+    info!("{buf}");
+    // Measure Continuously
+    (&instr).write_all(b"ACQUIRE:STOPAFTER SEQUENCE")?;
+    (&instr).write_all(b"ACQUIRE:STOPAFTER?")?;
+    buf.clear();
+    buf_reader.read_line(&mut buf)?;
+    info!("{buf}");
+
+    // Start measurement
+    (&instr).write_all(b"ACQUIRE:STATE RUN")?;
+    Ok(())
+}
+
+#[cfg(not(feature = "visa"))]
+fn setup_scope(_sample_rate: u32) -> anyhow::Result<()> {
+    use log::warn;
+    warn!("Visa Feature is not enabled, Automatic Scope setup will not be used");
+    Ok(())
 }
 
 async fn initialize_scope(address: &str) -> Result<(TekHsiClient, Vec<String>), TekHsiError> {

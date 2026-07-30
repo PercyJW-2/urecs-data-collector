@@ -202,13 +202,16 @@ enum Sources {
         address: String,
     },
     /// Reads data from an Oscilloscope
-    /// This doesn't work properly
+    /// visa feature is needed to control settings
     #[subenum(Oscilloscope)]
     #[bpaf(command, adjacent)]
     Oscilloscope {
         /// Network Address of the Tektronix Oscilloscope
         #[bpaf(short, long)]
         address: String,
+        /// Sample-rate that is used, default is 5MS/s
+        #[bpaf(short, long, fallback(5000000), display_fallback)]
+        sample_rate: u32,
     },
     /// Reads data from USB Oscilloscope
     #[subenum(UsbOscilloscope)]
@@ -337,9 +340,10 @@ fn main() -> Result<()> {
                     read_start.clone(),
                 )
             }
-            Sources::Oscilloscope { address } => {
+            Sources::Oscilloscope { address, sample_rate } => {
                 launch_oscilloscope(
                     address,
+                    sample_rate,
                     &shutdown_funcs,
                     &mut data_threads,
                     path.to_path_buf(),
@@ -471,6 +475,7 @@ fn launch_usb_oscilloscope(
 
 fn launch_oscilloscope(
     address: String,
+    sample_rate: u32,
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
     path_buf: PathBuf,
@@ -478,6 +483,7 @@ fn launch_oscilloscope(
 ) {
     match tekhsi_osc_communication::get_data_from_tek_hsi_oscilloscope(
         address,
+        sample_rate,
         read_start,
         path_buf
     ) {
