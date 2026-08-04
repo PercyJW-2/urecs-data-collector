@@ -39,6 +39,7 @@ pub(crate) fn get_data_from_usb_osc(
         match msmt_environment {
             MsmtEnvironment::Jetson => 15.0,
             MsmtEnvironment::M2 => 2.0,
+            MsmtEnvironment::TriggerChannel => 2.0,
         },
         current_channel_probe_factor.clone(),
         voltage_channel_probe_factor.clone(),
@@ -149,6 +150,8 @@ impl USBInstrumentWrapper {
             (OscilloscopeProbeFactor::X10, MsmtEnvironment::Jetson) => (PicoRange::X1_PROBE_1V, -1.5),
             (OscilloscopeProbeFactor::X1, MsmtEnvironment::M2) => (PicoRange::X1_PROBE_2V, -2.0),
             (OscilloscopeProbeFactor::X10, MsmtEnvironment::M2) => (PicoRange::X1_PROBE_200MV, -0.2),
+            (OscilloscopeProbeFactor::X1, MsmtEnvironment::TriggerChannel) => (PicoRange::X1_PROBE_2V, -2.0),
+            (OscilloscopeProbeFactor::X10, MsmtEnvironment::TriggerChannel) => (PicoRange::X1_PROBE_10V, -0.2),
         };
         stream_device.enable_channel(
             PicoChannel::A,

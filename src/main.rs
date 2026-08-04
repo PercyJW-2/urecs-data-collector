@@ -67,7 +67,8 @@ impl Display for OscilloscopeMsmtType {
 #[derive(Debug, Clone)]
 pub(crate) enum MsmtEnvironment {
     Jetson,
-    M2
+    M2,
+    TriggerChannel,
 }
 
 impl FromStr for MsmtEnvironment {
@@ -77,6 +78,7 @@ impl FromStr for MsmtEnvironment {
         match s.to_lowercase().as_str() {
             "jetson" => Ok(Self::Jetson),
             "m.2" => Ok(Self::M2),
+            "triggerchannel" => Ok(Self::TriggerChannel),
             _ => Err(format!("Unknown MsmtEnvironment: {}", s)),
         }
     }
@@ -87,6 +89,7 @@ impl Display for MsmtEnvironment {
         match self {
             Self::Jetson => write!(f, "Jetson"),
             Self::M2 => write!(f, "M.2"),
+            Self::TriggerChannel => write!(f, "TriggerChannel"),
         }
     }
 }
@@ -127,6 +130,52 @@ impl Display for OscilloscopeProbeFactor {
     }
 }
 
+#[derive(Clone, Debug)]
+enum BenchmarkCommand {
+    TimedEngineExecution{
+        engine_path: String,
+        duration: String,
+    },
+    JetsonCommand(String),
+    OtherCommand(String),
+    NoCommand,
+}
+
+impl FromStr for BenchmarkCommand {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.starts_with("TEE") {
+            let mut split = s.split(",");
+            split.next().ok_or("Impossible State")?;
+            Ok(BenchmarkCommand::TimedEngineExecution {
+                engine_path: split.next().ok_or("no path")?.to_string(),
+                duration: split.next().ok_or("no duration")?.to_string(),
+            })
+        } else if s.starts_with("JET") {
+            let (_, split) = s.split_once(" ").ok_or("No Command")?;
+            Ok(BenchmarkCommand::JetsonCommand(split.trim().to_string()))
+        } else {
+            Ok(BenchmarkCommand::OtherCommand(s.to_string()))
+        }
+    }
+}
+
+impl Display for BenchmarkCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BenchmarkCommand::TimedEngineExecution { engine_path, duration } =>
+                write!(f, "TimedEngineExecution{{{},{}}}", engine_path, duration),
+            BenchmarkCommand::JetsonCommand(command) =>
+                write!(f, "JetsonCommand({})", command),
+            BenchmarkCommand::OtherCommand(command) =>
+                write!(f, "OtherCommand({})", command),
+            BenchmarkCommand::NoCommand =>
+                write!(f, "NoCommand"),
+        }
+    }
+}
+
 #[derive(Bpaf, Debug, Clone)]
 #[bpaf(options)]
 struct Arguments {
@@ -144,8 +193,8 @@ struct Arguments {
     #[bpaf(short('e'), long, argument::<String>("DURATION"), map(|dur| parse(dur.as_str())), fallback(Ok(IDLE_DURATION)))]
     post_duration: Result<Duration, parse::Error>,
     /// Optional Command that is executed after the measurement begins
-    #[bpaf(short, long)]
-    command: Option<String>,
+    #[bpaf(short, long, fallback(BenchmarkCommand::NoCommand))]
+    command: BenchmarkCommand,
     /// First input source to be recorded
     #[bpaf(external, many)]
     sources: Vec<Sources>,
@@ -203,6 +252,7 @@ enum Sources {
     },
     /// Reads data from an Oscilloscope
     /// visa feature is needed to control settings
+    /// This measurement starts instantly and the provided duration is directly used
     #[subenum(Oscilloscope)]
     #[bpaf(command, adjacent)]
     Oscilloscope {
@@ -212,6 +262,10 @@ enum Sources {
         /// Sample-rate that is used, default is 5MS/s
         #[bpaf(short, long, fallback(5000000), display_fallback)]
         sample_rate: u32,
+        /// Frame duration, Often times this method has trouble to capture the complete measurement
+        /// thus this separate duration is introduced
+        #[bpaf(short, long, argument::<String>("DURATION"), map(|dur| parse(dur.as_str()).unwrap()), fallback(IDLE_DURATION))]
+        duration: Duration,
     },
     /// Reads data from USB Oscilloscope
     #[subenum(UsbOscilloscope)]
@@ -296,6 +350,7 @@ fn main() -> Result<()> {
     let post_duration = args.post_duration?;
     let mut data_threads = Vec::new();
     let read_start = Arc::new(AtomicBool::new(false));
+    let mut osc_duration = None;
     for source in args.sources {
         match source {
             Sources::Jetson { address, data_port, control_port } => {
@@ -340,10 +395,12 @@ fn main() -> Result<()> {
                     read_start.clone(),
                 )
             }
-            Sources::Oscilloscope { address, sample_rate } => {
+            Sources::Oscilloscope { address, sample_rate, duration } => {
+                osc_duration = Some(format!("{}", duration.as_secs() + 1));
                 launch_oscilloscope(
                     address,
                     sample_rate,
+                    duration,
                     &shutdown_funcs,
                     &mut data_threads,
                     path.to_path_buf(),
@@ -379,13 +436,24 @@ fn main() -> Result<()> {
 
     sleep(pre_duration);
     let mut command = None;
-    if let Some(cmd) = args.command {
+    if let BenchmarkCommand::NoCommand = args.command {
+    } else {
+        let cmd = match args.command {
+            BenchmarkCommand::TimedEngineExecution { engine_path, duration } => {
+                let trigger_wait = osc_duration.unwrap_or("500".to_string());
+                format!("ssh nx@10.42.0.44 ~/timed_engine_execution.sh {engine_path} {duration} {trigger_wait}")
+            },
+            BenchmarkCommand::JetsonCommand(cmd) => format!("ssh nx@10.42.0.44 {cmd}"),
+            BenchmarkCommand::OtherCommand(cmd) => cmd,
+            BenchmarkCommand::NoCommand => {"".to_string()}
+        };
         log::info!("Running command: {}", cmd);
         let cmd_split = shell_words::split(&cmd)?;
         command = Some(Command::new(&cmd_split[0])
             .args(&cmd_split[1..])
-            .stdout(Stdio::null()) // ignoring output of executed command
-            .spawn()?);
+            .stdout(Stdio::null())
+            .spawn()?
+        );
     }
 
     sleep(duration + post_duration);
@@ -476,6 +544,7 @@ fn launch_usb_oscilloscope(
 fn launch_oscilloscope(
     address: String,
     sample_rate: u32,
+    duration: Duration,
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
     path_buf: PathBuf,
@@ -484,6 +553,7 @@ fn launch_oscilloscope(
     match tekhsi_osc_communication::get_data_from_tek_hsi_oscilloscope(
         address,
         sample_rate,
+        duration,
         read_start,
         path_buf
     ) {
