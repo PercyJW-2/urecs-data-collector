@@ -134,7 +134,6 @@ impl Display for OscilloscopeProbeFactor {
 enum BenchmarkCommand {
     TimedEngineExecution{
         engine_path: String,
-        duration: String,
     },
     JetsonCommand(String),
     OtherCommand(String),
@@ -150,7 +149,6 @@ impl FromStr for BenchmarkCommand {
             split.next().ok_or("Impossible State")?;
             Ok(BenchmarkCommand::TimedEngineExecution {
                 engine_path: split.next().ok_or("no path")?.to_string(),
-                duration: split.next().ok_or("no duration")?.to_string(),
             })
         } else if s.starts_with("JET") {
             let (_, split) = s.split_once(" ").ok_or("No Command")?;
@@ -164,8 +162,8 @@ impl FromStr for BenchmarkCommand {
 impl Display for BenchmarkCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BenchmarkCommand::TimedEngineExecution { engine_path, duration } =>
-                write!(f, "TimedEngineExecution{{{},{}}}", engine_path, duration),
+            BenchmarkCommand::TimedEngineExecution { engine_path } =>
+                write!(f, "TimedEngineExecution({})", engine_path),
             BenchmarkCommand::JetsonCommand(command) =>
                 write!(f, "JetsonCommand({})", command),
             BenchmarkCommand::OtherCommand(command) =>
@@ -439,9 +437,12 @@ fn main() -> Result<()> {
     if let BenchmarkCommand::NoCommand = args.command {
     } else {
         let cmd = match args.command {
-            BenchmarkCommand::TimedEngineExecution { engine_path, duration } => {
+            BenchmarkCommand::TimedEngineExecution { engine_path } => {
                 let trigger_wait = osc_duration.unwrap_or("500".to_string());
-                format!("ssh nx@10.42.0.44 ~/timed_engine_execution.sh {engine_path} {duration} {trigger_wait}")
+                format!(
+                    "ssh nx@10.42.0.44 ~/timed_engine_execution.sh {engine_path} {} {trigger_wait}",
+                    duration.as_secs()
+                )
             },
             BenchmarkCommand::JetsonCommand(cmd) => format!("ssh nx@10.42.0.44 {cmd}"),
             BenchmarkCommand::OtherCommand(cmd) => cmd,

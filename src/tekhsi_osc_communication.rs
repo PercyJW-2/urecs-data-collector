@@ -16,6 +16,8 @@ use tekhsi_rs::errors::TekHsiError;
 use tekhsi_rs::{SubscribeOptions, TekHsiClient};
 use tekhsi_rs::data::{ChannelData, Waveform};
 use tekhsi_rs::errors::DecodeError::NoData;
+use tokio::select;
+use tokio_util::sync::CancellationToken;
 use crate::{DataThread, DataThreadReturnVal, ShutdownFn};
 
 pub(crate) fn get_data_from_tek_hsi_oscilloscope(
@@ -25,15 +27,17 @@ pub(crate) fn get_data_from_tek_hsi_oscilloscope(
     read_start: Arc<AtomicBool>,
     path: PathBuf,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
-    //setup_scope(sample_rate, duration)?;
+    setup_scope(sample_rate, duration)?;
 
     let rt = Runtime::new()?;
 
     let (client, symbols) =
         rt.block_on(initialize_scope(format!("{address}:5000").as_str()))?;
 
-    let running = Arc::new(AtomicBool::new(true));
-    let running_clone = running.clone();
+    let token = CancellationToken::new();
+    let cloned_token = token.clone();
+    //let running = Arc::new(AtomicBool::new(true));
+    //let running_clone = running.clone();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("current", DataType::Float64, false)
@@ -45,12 +49,12 @@ pub(crate) fn get_data_from_tek_hsi_oscilloscope(
         while !read_start.load(Ordering::Relaxed) {}
 
         rt.block_on(async {
-            let transmit_future = transmit_data(running_clone, client, symbols[0].clone(), wtr, schema);
-            let init_future = tokio::task::spawn_blocking(move || {
-                setup_scope(sample_rate, duration)
-            });
+            let transmit_future = transmit_data(cloned_token, client, symbols[0].clone(), wtr, schema);
+            //let init_future = tokio::task::spawn_blocking(move || {
+            //    setup_scope(sample_rate, duration)
+            //});
             let res = transmit_future.await;
-            init_future.await??;            
+            //init_future.await??;
             res
         })
             .map(DataThreadReturnVal::ParquetWriter)
@@ -59,7 +63,7 @@ pub(crate) fn get_data_from_tek_hsi_oscilloscope(
         Box::new(move || {
             info!("Shutting down TekHSI Interface");
             sleep(Duration::from_secs(2));
-            running.store(false, Ordering::Relaxed);
+            token.cancel();
             Ok(())
         }),
         data_thread,
@@ -105,11 +109,22 @@ fn setup_scope(sample_rate: u32, duration: Duration) -> anyhow::Result<()> {
     buf_reader.read_line(&mut buf)?;
     info!("Samplerate, Recordlength: {}", buf.trim_end());
     // Measure Continuously
-    (&instr).write_all(b"ACQUIRE:STOPAFTER SEQUENCE")?;
+    (&instr).write_all(b"ACQUIRE:STOPAFTER RUNSTOP")?;
     (&instr).write_all(b"ACQUIRE:STOPAFTER?")?;
     buf.clear();
     buf_reader.read_line(&mut buf)?;
     info!("Stop after: {}", buf.trim_end());
+    // Setup Trigger
+    (&instr).write_all(b"TRIGGER:A:TYPE EDGE;:TRIGGER:A:EDGE:SOURCE CH2;:TRIGGER:A:EDGE:SLOPE FALL;:TRIGGER:A:LEVEL:CH1 0.9;:TRIGGER:A:MODE NORMAL")?;
+    (&instr).write_all(b"TRIGGER:A?")?;
+    buf.clear();
+    buf_reader.read_line(&mut buf)?;
+    info!("Trigger Mode: {}", buf.trim_end());
+    (&instr).write_all(b"HORIZONTAL:DELAY:MODE OFF;:HORIZONTAL:POSITION 0")?;
+    (&instr).write_all(b"HORIZONTAL?")?;
+    buf.clear();
+    buf_reader.read_line(&mut buf)?;
+    info!("Horizontal Settings: {}", buf.trim_end());
 
     // Start measurement
     (&instr).write_all(b"ACQUIRE:STATE RUN")?;
@@ -136,7 +151,7 @@ async fn initialize_scope(address: &str) -> Result<(TekHsiClient, Vec<String>), 
 }
 
 async fn transmit_data(
-    running: Arc<AtomicBool>,
+    running: CancellationToken,
     client: TekHsiClient,
     symbol: String,
     mut wtr: ArrowWriter<File>,
@@ -151,11 +166,22 @@ async fn transmit_data(
         }
     )?;
 
-    while running.load(Ordering::Relaxed) && let Ok(acquisition) = rx.recv().await {
+    let mut last_acq_id: Option<u64> = None;
+
+    info!("Starting to listen for new Data");
+    while let Ok(acquisition) = select! {
+        _ = running.cancelled() => Err(anyhow::anyhow!("Acquisition was cancelled")),
+        res = rx.recv() => res.map_err(anyhow::Error::from),
+    } {
         let channel_data = acquisition.get_by_symbol(symbol.as_str())
             .ok_or(TekHsiError::Decode(NoData))?;
+        //info!("Received data");
         match channel_data {
-            ChannelData::Waveform { acq_id: _, symbol: _, header: _, waveform } => {
+            ChannelData::Waveform { acq_id, symbol: _, header: _, waveform } => {
+                if let Some(last_acq_id) = last_acq_id && last_acq_id == *acq_id {
+                    continue;
+                }
+                last_acq_id = Some(*acq_id);
                 match waveform {
                     Waveform::Analog(data) => {
                         //info!("Trigger Index: {}, X-Axis-Spacing {}", data.trigger_index, data.x_axis_spacing);
@@ -177,6 +203,9 @@ async fn transmit_data(
                 return Err(anyhow!(error.clone()))
         }
     }
+    info!("Waiting for Disconnect");
+    client.disconnect().await?;
+    info!("TekHSI Disconnect");
 
     Ok(wtr)
 }
