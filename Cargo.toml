@@ -17,7 +17,7 @@ parse_duration = "2.1.1"
 shell-words = "1.1.1"
 parquet = "59.1.0"
 arrow = "59.1.0"
-tekhsi_rs = { version = "0.1.1", default-features = false }
+tekhsi_rs = { path = "./tekhsi_rs" }
 visa-rs = { version = "0.6.2", optional = true}
 tokio = "1.53.1"
 tokio-util = "0.7.19"

@@ -10,7 +10,7 @@ use arrow::array::Float64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use tokio::runtime::Runtime;
-use log::{info};
+use log::{error, info};
 use parquet::arrow::ArrowWriter;
 use tekhsi_rs::errors::TekHsiError;
 use tekhsi_rs::{SubscribeOptions, TekHsiClient};
@@ -161,7 +161,7 @@ async fn transmit_data(
         vec![symbol.clone()],
         SubscribeOptions {
             capacity: 16,
-            download_chunk_size: 4_194_304,
+            download_chunk_size: 50 * 1024 * 1024,
             decode_buffer_capacity: 32,
         }
     )?;
@@ -169,10 +169,17 @@ async fn transmit_data(
     let mut last_acq_id: Option<u64> = None;
 
     info!("Starting to listen for new Data");
-    while let Ok(acquisition) = select! {
+    loop {
+        let acquisition = match select! {
         _ = running.cancelled() => Err(anyhow::anyhow!("Acquisition was cancelled")),
         res = rx.recv() => res.map_err(anyhow::Error::from),
-    } {
+        } {
+            Ok(acquisition) => acquisition,
+            Err(error) => {
+                error!("{}", error);
+                break;
+            }
+        };
         let channel_data = acquisition.get_by_symbol(symbol.as_str())
             .ok_or(TekHsiError::Decode(NoData))?;
         //info!("Received data");

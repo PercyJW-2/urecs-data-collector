@@ -1,0 +1,3 @@
+[submodule "tekhsi_rs"]
+	path = tekhsi_rs
+	url = git@github.com:PercyJW-2/tekhsi_rs.git
