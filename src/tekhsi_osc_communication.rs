@@ -171,7 +171,7 @@ async fn transmit_data(
     info!("Starting to listen for new Data");
     loop {
         let acquisition = match select! {
-        _ = running.cancelled() => Err(anyhow::anyhow!("Acquisition was cancelled")),
+        _ = running.cancelled() => Err(anyhow::anyhow!("Acquisition was stopped - This is normal behaviour")),
         res = rx.recv() => res.map_err(anyhow::Error::from),
         } {
             Ok(acquisition) => acquisition,
