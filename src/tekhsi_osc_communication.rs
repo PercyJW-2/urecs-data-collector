@@ -96,7 +96,7 @@ fn setup_scope(sample_rate: u32, duration: Duration) -> anyhow::Result<()> {
     buf_reader.read_line(&mut buf)?;
     info!("Enabled Channels: {}", buf.trim_end());
     // Setup samplerate
-    let memory_depth = sample_rate * duration.as_secs() as u32;
+    let memory_depth = (sample_rate as f64 * duration.as_secs_f64()) as u32;
     (&instr).write_all(
         format!(
             "HORIZONTAL:MODE MANUAL;:HORIZONTAL:SAMPLERATE {};:HORIZONTAL:RECORDLENGTH {}",
