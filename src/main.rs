@@ -5,6 +5,7 @@ mod network_shelly_plug;
 mod utils;
 mod pico_osc_communication;
 mod tekhsi_osc_communication;
+mod network_hailo_rt;
 
 use std::{fs, fs::File};
 use std::fmt::Display;
@@ -705,5 +706,22 @@ fn launch_hailo_rt(
     path: PathBuf,
     read_start: Arc<Barrier>,
 ) {
-    
+    match network_hailo_rt::get_data_from_hailo_rt(
+        hailo_rt_address,
+        hailo_rt_data_port,
+        hailo_rt_control_port,
+        path,
+        read_start
+    ) {
+        Ok((shutdown_func, data_thread)) => {
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
+            data_threads.push(data_thread);
+        }
+        Err(error) => {
+            log::error!("Failed to set up HiloRt networking: {error}");
+        }
+    }
 }
