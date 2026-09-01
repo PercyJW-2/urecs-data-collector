@@ -7,7 +7,7 @@ use std::io::{ErrorKind, Write};
 use std::net::{TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 use arrow::array::{ArrayBuilder, ArrayRef, UInt32Builder, UInt64Builder};
@@ -19,7 +19,7 @@ pub(crate) fn get_data_from_jetson(
     data_port: u16,
     control_port: u16,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
 ) -> Result<(ShutdownFn, DataThread)> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(format!("{address}:{data_port}"))?;
@@ -44,7 +44,7 @@ pub(crate) fn get_data_from_jetson(
 
     let mut buf = [b' '; 512];
     let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
-        while !read_start.load(Ordering::Acquire) {}
+        read_start.wait();
         let start_time = Instant::now();
 
         // starting datastream

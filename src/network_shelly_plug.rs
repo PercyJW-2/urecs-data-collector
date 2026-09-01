@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -45,7 +45,7 @@ struct Temperature {
 pub(crate) fn get_data_from_shelly(
     address: String,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     let uri_string = format!("http://{address}/rpc/Switch.GetStatus?id=0");
 
@@ -69,7 +69,7 @@ pub(crate) fn get_data_from_shelly(
     let mut power_array = Float32Builder::new();
 
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
-        while !read_start.load(Ordering::Acquire) {}
+        read_start.wait();
         reset_shelly_plug_reading(address, &client);
         let mut last_consumed_energy: f32 = 0.0;
         let measurement_start = Instant::now();

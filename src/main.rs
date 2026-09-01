@@ -14,7 +14,7 @@ use parse_duration::parse;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
@@ -198,7 +198,7 @@ struct Arguments {
     sources: Vec<Sources>,
 }
 
-#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope, UsbOscilloscope)]
+#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope, UsbOscilloscope, HailoRT)]
 #[derive(Bpaf, Debug, Clone)]
 enum Sources {
     /// Reads data from Jetson using (tegrastats-net)[https://gitlab.ub.uni-bielefeld.de/jwachsmuth/tegrastats-net]
@@ -206,6 +206,20 @@ enum Sources {
     #[bpaf(command, adjacent)]
     Jetson {
         /// Network Address of the Jetson
+        #[bpaf(short, long)]
+        address: String,
+        /// Port on which Data is received
+        #[bpaf(short, long)]
+        data_port: u16,
+        /// Port on which the Data transmission is stopped
+        #[bpaf(short, long)]
+        control_port: u16,
+    },
+    /// Reads data from Hailo Accelerator using (hailort-msmt)[https://github.com/PercyJW-2/hailort-msmt]
+    #[subenum(HailoRT)]
+    #[bpaf(command, adjacent)]
+    HailoRT {
+        /// Network Address of HailoRT Host
         #[bpaf(short, long)]
         address: String,
         /// Port on which Data is received
@@ -320,6 +334,7 @@ fn main() -> Result<()> {
     let mut shelly_plug_count = 0;
     let mut oscilloscope_count = 0;
     let mut usb_oscilloscope_count = 0;
+    let mut hailo_rt_count = 0;
     for source in &args.sources {
         if Jetson::try_from(source.clone()).is_ok() {
             jetson_count += 1;
@@ -331,14 +346,17 @@ fn main() -> Result<()> {
             oscilloscope_count += 1;
         } else if UsbOscilloscope::try_from(source.clone()).is_ok() {
             usb_oscilloscope_count += 1;
+        } else if HailoRT::try_from(source.clone()).is_ok() {
+            hailo_rt_count += 1;
         }
     }
     if jetson_count > 1
         || firmware_count > 1
         || shelly_plug_count > 1
         || oscilloscope_count > 1
-        || usb_oscilloscope_count > 1 {
-        return Err(anyhow!("The proposed measurement configuration is not possible"));
+        || usb_oscilloscope_count > 1
+        || hailo_rt_count > 1 {
+        return Err(anyhow!("The proposed measurement configuration is currently not possible"));
     }
 
     // start data acquisition
@@ -347,7 +365,7 @@ fn main() -> Result<()> {
     let pre_duration = args.pre_duration?;
     let post_duration = args.post_duration?;
     let mut data_threads = Vec::new();
-    let read_start = Arc::new(AtomicBool::new(false));
+    let read_start = Arc::new(Barrier::new(args.sources.len() + 1));
     let mut osc_duration = None;
     for source in args.sources {
         match source {
@@ -361,6 +379,17 @@ fn main() -> Result<()> {
                     path.to_path_buf(),
                     read_start.clone(),
                 );
+            }
+            Sources::HailoRT { address, data_port, control_port } => {
+                launch_hailo_rt(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                    address,
+                    data_port,
+                    control_port,
+                    path.to_path_buf(),
+                    read_start.clone(),
+                )
             }
             Sources::Firmware { address } => {
                 launch_firmware(
@@ -430,7 +459,7 @@ fn main() -> Result<()> {
     }
 
     log::info!("Starting measurement");
-    read_start.store(true, Ordering::Release);
+    read_start.wait();
 
     sleep(pre_duration);
     let mut command = None;
@@ -511,7 +540,7 @@ fn launch_usb_oscilloscope(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
     sample_rate: u32,
     start_func_gen: bool,
     msmt_type: OscilloscopeMsmtType,
@@ -549,7 +578,7 @@ fn launch_oscilloscope(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
     path_buf: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
 ) {
     match tekhsi_osc_communication::get_data_from_tek_hsi_oscilloscope(
         address,
@@ -576,7 +605,7 @@ fn launch_shelly_plug(
     data_threads: &mut Vec<DataThread>,
     address: String,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
 ) {
     match network_shelly_plug::get_data_from_shelly(address, path, read_start) {
         Ok((shutdown_func, data_thread)) => {
@@ -597,7 +626,7 @@ fn launch_firmware(
     data_threads: &mut Vec<DataThread>,
     address: String,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
 ) {
     match network_firmware::get_data_from_firmware(address, path, read_start) {
         Ok((shutdown_func, data_thread)) => {
@@ -619,7 +648,7 @@ fn launch_fast_firmware(
     address: String,
     port: u16,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
     channel: u8,
     duration: Duration,
     sample_rate: u16,
@@ -645,7 +674,7 @@ fn launch_jetson(
     jetson_data_port: u16,
     jetson_control_port: u16,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
 ) {
     match network_jetson::get_data_from_jetson(
         jetson_address,
@@ -665,4 +694,16 @@ fn launch_jetson(
             log::error!("Failed to set up Jetson networking: {error}");
         }
     }
+}
+
+fn launch_hailo_rt(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<DataThread>,
+    hailo_rt_address: String,
+    hailo_rt_data_port: u16,
+    hailo_rt_control_port: u16,
+    path: PathBuf,
+    read_start: Arc<Barrier>,
+) {
+    
 }

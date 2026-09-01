@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread};
 use std::thread::sleep;
@@ -24,7 +24,7 @@ pub(crate) fn get_data_from_tek_hsi_oscilloscope(
     address: String,
     sample_rate: u32,
     duration: Duration,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
     path: PathBuf,
 ) -> anyhow::Result<(ShutdownFn, DataThread)> {
     setup_scope(sample_rate, duration)?;
@@ -46,7 +46,7 @@ pub(crate) fn get_data_from_tek_hsi_oscilloscope(
     let wtr = ArrowWriter::try_new(file, schema.clone(), None)?;
 
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
-        while !read_start.load(Ordering::Relaxed) {}
+        read_start.wait();
 
         rt.block_on(async {
             let transmit_future = transmit_data(cloned_token, client, symbols[0].clone(), wtr, schema);

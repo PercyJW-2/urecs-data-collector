@@ -15,14 +15,14 @@ use pico_sdk::prelude::*;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
 
 pub(crate) fn get_data_from_usb_osc(
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
     sample_rate: u32,
     start_func_gen: bool,
     msmt_type: OscilloscopeMsmtType,
@@ -54,7 +54,7 @@ pub(crate) fn get_data_from_usb_osc(
     )?;
 
     let data_thread = thread::spawn(move || -> Result<DataThreadReturnVal> {
-        while !read_start.load(Ordering::Acquire) {}
+        read_start.wait();
 
         instrument_wrapper.start(sample_rate)?;
         while running.load(Ordering::Relaxed) {

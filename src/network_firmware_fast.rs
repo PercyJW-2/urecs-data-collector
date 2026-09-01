@@ -3,7 +3,7 @@ use crate::{DataThread, DataThreadReturnVal, ShutdownFn, PARQUET_BATCH_ROW_COUNT
 use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -16,7 +16,7 @@ pub(crate) fn get_data_from_fast_firmware(
     address: String,
     data_port: u16,
     path: PathBuf,
-    read_start: Arc<AtomicBool>,
+    read_start: Arc<Barrier>,
     channel: u8,
     duration: Duration,
     sample_rate: u16,
@@ -39,7 +39,7 @@ pub(crate) fn get_data_from_fast_firmware(
 
     let mut buf = [b' '; 256];
     let data_thread = thread::spawn(move || -> anyhow::Result<DataThreadReturnVal> {
-        while !read_start.load(Ordering::Acquire) {}
+        read_start.wait();
 
         // starting datastream
         socket.send(format!("go {} {} {}\n", channel, duration.as_micros(), sample_rate).as_bytes())?;
