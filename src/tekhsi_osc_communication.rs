@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread};
 use std::thread::sleep;
 use std::time::Duration;

@@ -62,6 +62,10 @@ pub(crate) fn get_data_from_fast_firmware(
                         running.store(false, Ordering::Relaxed);
                         continue;
                     }
+                    ErrorKind::Interrupted => {
+                        log::warn!("Was Interrupted from reading, trying to continue");
+                        continue;
+                    }
                     _ => {
                         log::error!("Error on receiving data: {err}");
                         break;

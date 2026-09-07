@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::sync::{Arc, Barrier, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 use parquet::arrow::ArrowWriter;
