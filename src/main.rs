@@ -7,6 +7,7 @@ mod utils;
 mod pico_osc_communication;
 mod tekhsi_osc_communication;
 mod network_hailo_rt;
+mod network_nvidia_gpu;
 
 use std::{fs, fs::File};
 use std::fmt::Display;
@@ -199,7 +200,7 @@ struct Arguments {
     sources: Vec<Sources>,
 }
 
-#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope, UsbOscilloscope, HailoRT)]
+#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope, UsbOscilloscope, HailoRT, NVGPU)]
 #[derive(Bpaf, Debug, Clone)]
 enum Sources {
     /// Reads data from Jetson using (tegrastats-net)[https://gitlab.ub.uni-bielefeld.de/jwachsmuth/tegrastats-net]
@@ -221,6 +222,20 @@ enum Sources {
     #[bpaf(command, adjacent)]
     HailoRT {
         /// Network Address of HailoRT Host
+        #[bpaf(short, long)]
+        address: String,
+        /// Port on which Data is received
+        #[bpaf(short, long)]
+        data_port: u16,
+        /// Port on which the Data transmission is stopped
+        #[bpaf(short, long)]
+        control_port: u16,
+    },
+    /// Reads data from Nvidia GPUs using (smi-net)[https://github.com/PercyJW-2/smi-net]
+    #[subenum(NVGPU)]
+    #[bpaf(command, adjacent)]
+    NVGPU {
+        /// Network Address of the Nvidia GPU
         #[bpaf(short, long)]
         address: String,
         /// Port on which Data is received
@@ -336,6 +351,7 @@ fn main() -> Result<()> {
     let mut oscilloscope_count = 0;
     let mut usb_oscilloscope_count = 0;
     let mut hailo_rt_count = 0;
+    let mut nvidia_gpu_count = 0;
     for source in &args.sources {
         if Jetson::try_from(source.clone()).is_ok() {
             jetson_count += 1;
@@ -349,6 +365,8 @@ fn main() -> Result<()> {
             usb_oscilloscope_count += 1;
         } else if HailoRT::try_from(source.clone()).is_ok() {
             hailo_rt_count += 1;
+        } else if NVGPU::try_from(source.clone()).is_ok() {
+            nvidia_gpu_count += 1;
         }
     }
     if jetson_count > 1
@@ -356,7 +374,9 @@ fn main() -> Result<()> {
         || shelly_plug_count > 1
         || oscilloscope_count > 1
         || usb_oscilloscope_count > 1
-        || hailo_rt_count > 1 {
+        || hailo_rt_count > 1
+        || nvidia_gpu_count > 1
+    {
         return Err(anyhow!("The proposed measurement configuration is currently not possible"));
     }
 
@@ -383,6 +403,17 @@ fn main() -> Result<()> {
             }
             Sources::HailoRT { address, data_port, control_port } => {
                 launch_hailo_rt(
+                    &shutdown_funcs,
+                    &mut data_threads,
+                    address,
+                    data_port,
+                    control_port,
+                    path.to_path_buf(),
+                    read_start.clone(),
+                )
+            }
+            Sources::NVGPU { address, data_port, control_port } => {
+                launch_nv_gpu(
                     &shutdown_funcs,
                     &mut data_threads,
                     address,
@@ -722,6 +753,35 @@ fn launch_hailo_rt(
         }
         Err(error) => {
             log::error!("Failed to set up HiloRt networking: {error}");
+        }
+    }
+}
+
+fn launch_nv_gpu(
+    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
+    data_threads: &mut Vec<DataThread>,
+    nv_gpu_address: String,
+    nv_gpu_data_port: u16,
+    nv_gpu_control_port: u16,
+    path: PathBuf,
+    read_start: Arc<Barrier>,
+) {
+    match network_nvidia_gpu::get_data_from_nvidia_gpu(
+        nv_gpu_address,
+        nv_gpu_data_port,
+        nv_gpu_control_port,
+        path,
+        read_start
+    ) {
+        Ok((shutdown_func, data_thread)) => {
+            shutdown_funcs
+                .lock()
+                .expect("Failed to lock the shutdown hook")
+                .push(shutdown_func);
+            data_threads.push(data_thread);
+        }
+        Err(error) => {
+            log::error!("Failed to set up Nvidia GPU networking: {error}");
         }
     }
 }
