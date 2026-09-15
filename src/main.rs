@@ -11,7 +11,7 @@ mod network_nvidia_gpu;
 
 use std::{fs, fs::File};
 use std::fmt::Display;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use bpaf::Bpaf;
 use parse_duration::parse;
 use std::path::PathBuf;
@@ -391,80 +391,108 @@ fn main() -> Result<()> {
     for source in args.sources {
         match source {
             Sources::Jetson { address, data_port, control_port } => {
-                launch_jetson(
+                let jetson_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    address,
-                    data_port,
-                    control_port,
-                    path.to_path_buf(),
-                    read_start.clone(),
-                );
+                    "Jetson Networking",
+                    move || network_jetson::get_data_from_jetson(
+                        address,
+                        data_port,
+                        control_port,
+                        path.to_path_buf(),
+                        jetson_start,
+                    )
+                )?;
             }
             Sources::HailoRT { address, data_port, control_port } => {
-                launch_hailo_rt(
+                let source_read_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    address,
-                    data_port,
-                    control_port,
-                    path.to_path_buf(),
-                    read_start.clone(),
-                )
+                    "HailoRT Networking",
+                    move || network_hailo_rt::get_data_from_hailo_rt(
+                        address,
+                        data_port,
+                        control_port,
+                        path.to_path_buf(),
+                        source_read_start,
+                    ),
+                )?;
             }
             Sources::NVGPU { address, data_port, control_port } => {
-                launch_nv_gpu(
+                let source_read_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    address,
-                    data_port,
-                    control_port,
-                    path.to_path_buf(),
-                    read_start.clone(),
-                )
+                    "NVIDIA GPU Networking",
+                    move || network_nvidia_gpu::get_data_from_nvidia_gpu(
+                        address,
+                        data_port,
+                        control_port,
+                        path.to_path_buf(),
+                        source_read_start,
+                    ),
+                )?;
             }
             Sources::Firmware { address } => {
-                launch_firmware(
+                let source_read_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    address,
-                    path.to_path_buf(),
-                    read_start.clone(),
-                );
+                    "Firmware Networking",
+                    move || network_firmware::get_data_from_firmware(
+                        address,
+                        path.to_path_buf(),
+                        source_read_start,
+                    ),
+                )?;
             }
             Sources::FastFirmware { address, data_port, channel , sample_rate} => {
-                launch_fast_firmware(
+                let source_read_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    address,
-                    data_port,
-                    path.to_path_buf(),
-                    read_start.clone(),
-                    channel,
-                    duration + (IDLE_DURATION * 2),
-                    sample_rate,
-                );
+                    "Fast Firmware Networking",
+                    move || network_firmware_fast::get_data_from_fast_firmware(
+                        address,
+                        data_port,
+                        path.to_path_buf(),
+                        source_read_start,
+                        channel,
+                        duration + (IDLE_DURATION * 2),
+                        sample_rate,
+                    ),
+                )?;
             }
             Sources::ShellyPlug { address } => {
-                launch_shelly_plug(
+                let source_read_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    address,
-                    path.to_path_buf(),
-                    read_start.clone(),
-                )
+                    "Shelly Plug",
+                    move || network_shelly_plug::get_data_from_shelly(
+                        address,
+                        path.to_path_buf(),
+                        source_read_start,
+                    ),
+                )?;
             }
             Sources::Oscilloscope { address, sample_rate, duration } => {
                 osc_duration = Some(format!("{}", duration.as_secs() + 1));
-                launch_oscilloscope(
-                    address,
-                    sample_rate,
-                    duration,
+                let source_read_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    path.to_path_buf(),
-                    read_start.clone()
-                )
+                    "TekHSI Oscilloscope",
+                    move || tekhsi_osc_communication::get_data_from_tek_hsi_oscilloscope(
+                        address,
+                        sample_rate,
+                        duration,
+                        source_read_start,
+                        path.to_path_buf(),
+                    ),
+                )?;
             }
             Sources::UsbOscilloscope {
                 sample_rate,
@@ -474,18 +502,22 @@ fn main() -> Result<()> {
                 current_channel_probe_factor,
                 voltage_channel_probe_factor,
             } => {
-                launch_usb_oscilloscope(
+                let source_read_start = read_start.clone();
+                register_source(
                     &shutdown_funcs,
                     &mut data_threads,
-                    path.to_path_buf(),
-                    read_start.clone(),
-                    sample_rate,
-                    use_function_gen,
-                    measurement_type,
-                    msmt_environment,
-                    current_channel_probe_factor,
-                    voltage_channel_probe_factor,
-                )
+                    "USB Oscilloscope",
+                    move || pico_osc_communication::get_data_from_usb_osc(
+                        path.to_path_buf(),
+                        source_read_start,
+                        sample_rate,
+                        use_function_gen,
+                        measurement_type,
+                        msmt_environment,
+                        current_channel_probe_factor,
+                        voltage_channel_probe_factor,
+                    ),
+                )?;
             }
         }
     }
@@ -568,220 +600,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn launch_usb_oscilloscope(
+fn register_source<F>(
     shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
     data_threads: &mut Vec<DataThread>,
-    path: PathBuf,
-    read_start: Arc<Barrier>,
-    sample_rate: u32,
-    start_func_gen: bool,
-    msmt_type: OscilloscopeMsmtType,
-    msmt_environment: MsmtEnvironment,
-    current_channel_probe_factor: OscilloscopeProbeFactor,
-    voltage_channel_probe_factor: OscilloscopeProbeFactor,
-) {
-    match pico_osc_communication::get_data_from_usb_osc(
-        path,
-        read_start,
-        sample_rate,
-        start_func_gen,
-        msmt_type,
-        msmt_environment,
-        current_channel_probe_factor,
-        voltage_channel_probe_factor
-    ) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(error) => {
-            log::error!("Failed to setup USB Oscilloscope: {error}");
-        }
-    }
-}
-
-fn launch_oscilloscope(
-    address: String,
-    sample_rate: u32,
-    duration: Duration,
-    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    path_buf: PathBuf,
-    read_start: Arc<Barrier>,
-) {
-    match tekhsi_osc_communication::get_data_from_tek_hsi_oscilloscope(
-        address,
-        sample_rate,
-        duration,
-        read_start,
-        path_buf
-    ) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(error) => {
-            log::error!("Failed to setup TekHSI Communication: {error}");
-        }
-    }
-}
-
-fn launch_shelly_plug(
-    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    address: String,
-    path: PathBuf,
-    read_start: Arc<Barrier>,
-) {
-    match network_shelly_plug::get_data_from_shelly(address, path, read_start) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(err) => {
-            log::error!("Failed to set up shelly plug: {err}");
-        }
-    }
-}
-
-fn launch_firmware(
-    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    address: String,
-    path: PathBuf,
-    read_start: Arc<Barrier>,
-) {
-    match network_firmware::get_data_from_firmware(address, path, read_start) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(error) => {
-            log::error!("Failed to set up Firmware networking: {error}");
-        }
-    }
-}
-
-fn launch_fast_firmware(
-    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    address: String,
-    port: u16,
-    path: PathBuf,
-    read_start: Arc<Barrier>,
-    channel: u8,
-    duration: Duration,
-    sample_rate: u16,
-) {
-    match network_firmware_fast::get_data_from_fast_firmware(address, port, path, read_start, channel, duration, sample_rate) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(error) => {
-            log::error!("Failed to set up Fast firmware networking: {error}");
-        }
-    }
-}
-
-fn launch_jetson(
-    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    jetson_address: String,
-    jetson_data_port: u16,
-    jetson_control_port: u16,
-    path: PathBuf,
-    read_start: Arc<Barrier>,
-) {
-    match network_jetson::get_data_from_jetson(
-        jetson_address,
-        jetson_data_port,
-        jetson_control_port,
-        path,
-        read_start
-    ) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(error) => {
-            log::error!("Failed to set up Jetson networking: {error}");
-        }
-    }
-}
-
-fn launch_hailo_rt(
-    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    hailo_rt_address: String,
-    hailo_rt_data_port: u16,
-    hailo_rt_control_port: u16,
-    path: PathBuf,
-    read_start: Arc<Barrier>,
-) {
-    match network_hailo_rt::get_data_from_hailo_rt(
-        hailo_rt_address,
-        hailo_rt_data_port,
-        hailo_rt_control_port,
-        path,
-        read_start
-    ) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(error) => {
-            log::error!("Failed to set up HiloRt networking: {error}");
-        }
-    }
-}
-
-fn launch_nv_gpu(
-    shutdown_funcs: &Arc<Mutex<Vec<ShutdownFn>>>,
-    data_threads: &mut Vec<DataThread>,
-    nv_gpu_address: String,
-    nv_gpu_data_port: u16,
-    nv_gpu_control_port: u16,
-    path: PathBuf,
-    read_start: Arc<Barrier>,
-) {
-    match network_nvidia_gpu::get_data_from_nvidia_gpu(
-        nv_gpu_address,
-        nv_gpu_data_port,
-        nv_gpu_control_port,
-        path,
-        read_start
-    ) {
-        Ok((shutdown_func, data_thread)) => {
-            shutdown_funcs
-                .lock()
-                .expect("Failed to lock the shutdown hook")
-                .push(shutdown_func);
-            data_threads.push(data_thread);
-        }
-        Err(error) => {
-            log::error!("Failed to set up Nvidia GPU networking: {error}");
-        }
-    }
+    name: &str,
+    setup: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Result<(ShutdownFn, DataThread)>,
+{
+    let (shutdown_func, data_thread) =
+        setup().with_context(|| format!("Failed to set up {name}"))?;
+    shutdown_funcs
+        .lock()
+        .expect("Failed to lock the shutdown hook")
+        .push(shutdown_func);
+    data_threads.push(data_thread);
+    Ok(())
 }
