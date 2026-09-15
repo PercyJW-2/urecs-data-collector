@@ -10,6 +10,7 @@ mod network_hailo_rt;
 mod network_nvidia_gpu;
 
 use std::{fs, fs::File};
+use std::collections::HashSet;
 use std::fmt::Display;
 use anyhow::{anyhow, Context, Result};
 use bpaf::Bpaf;
@@ -21,7 +22,6 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 use parquet::arrow::ArrowWriter;
-use subenum::subenum;
 use crate::pico_osc_communication::USBInstrumentWrapper;
 
 const IDLE_DURATION: Duration = Duration::from_secs(5);
@@ -200,11 +200,9 @@ struct Arguments {
     sources: Vec<Sources>,
 }
 
-#[subenum(Firmware, Jetson, ShellyPlug, Oscilloscope, UsbOscilloscope, HailoRT, NVGPU)]
 #[derive(Bpaf, Debug, Clone)]
 enum Sources {
     /// Reads data from Jetson using (tegrastats-net)[https://gitlab.ub.uni-bielefeld.de/jwachsmuth/tegrastats-net]
-    #[subenum(Jetson)]
     #[bpaf(command, adjacent)]
     Jetson {
         /// Network Address of the Jetson
@@ -218,7 +216,6 @@ enum Sources {
         control_port: u16,
     },
     /// Reads data from Hailo Accelerator using (hailort-msmt)[https://github.com/PercyJW-2/hailort-msmt]
-    #[subenum(HailoRT)]
     #[bpaf(command, adjacent)]
     HailoRT {
         /// Network Address of HailoRT Host
@@ -232,7 +229,6 @@ enum Sources {
         control_port: u16,
     },
     /// Reads data from Nvidia GPUs using (smi-net)[https://github.com/PercyJW-2/smi-net]
-    #[subenum(NVGPU)]
     #[bpaf(command, adjacent)]
     NVGPU {
         /// Network Address of the Nvidia GPU
@@ -246,7 +242,6 @@ enum Sources {
         control_port: u16,
     },
     /// Reads data from the default u.RECS Firmware
-    #[subenum(Firmware)]
     #[bpaf(command, adjacent)]
     Firmware {
         /// Network Address of the u.RECS
@@ -254,7 +249,6 @@ enum Sources {
         address: String,
     },
     /// Reads data from a minimal u.RECS Firmware focussing on fast ADC readouts
-    #[subenum(Firmware)]
     #[bpaf(command, adjacent)]
     FastFirmware {
         /// Network Address of the u.RECS
@@ -271,7 +265,6 @@ enum Sources {
         sample_rate: u16,
     },
     /// Reads data from a Shelly PlusPlugS
-    #[subenum(ShellyPlug)]
     #[bpaf(command, adjacent)]
     ShellyPlug {
         /// Network Address of the Shelly Plug
@@ -281,7 +274,6 @@ enum Sources {
     /// Reads data from an Oscilloscope
     /// visa feature is needed to control settings
     /// This measurement starts instantly and the provided duration is directly used
-    #[subenum(Oscilloscope)]
     #[bpaf(command, adjacent)]
     Oscilloscope {
         /// Network Address of the Tektronix Oscilloscope
@@ -296,7 +288,6 @@ enum Sources {
         duration: Duration,
     },
     /// Reads data from USB Oscilloscope
-    #[subenum(UsbOscilloscope)]
     #[bpaf(command, adjacent)]
     UsbOscilloscope {
         /// Sample-rate that is used, default is 5MS/s
@@ -318,6 +309,34 @@ enum Sources {
         /// Selects the probe factor used, its either X1 or X10, while the default is X10
         #[bpaf(short, long, fallback(OscilloscopeProbeFactor::X10), display_fallback)]
         voltage_channel_probe_factor: OscilloscopeProbeFactor,
+    }
+}
+
+/// Identifies the hardware a source reads from. At most one source per kind may be
+/// recorded at a time, so this is what the duplicate check in `main` compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SourceKind {
+    Jetson,
+    HailoRT,
+    NVGPU,
+    Firmware,
+    ShellyPlug,
+    Oscilloscope,
+    UsbOscilloscope,
+}
+
+impl Sources {
+    fn kind(&self) -> SourceKind {
+        match self {
+            Sources::Jetson { .. } => SourceKind::Jetson,
+            Sources::HailoRT { .. } => SourceKind::HailoRT,
+            Sources::NVGPU { .. } => SourceKind::NVGPU,
+            // Both firmware variants talk to the same u.RECS board, so they share a kind
+            Sources::Firmware { .. } | Sources::FastFirmware { .. } => SourceKind::Firmware,
+            Sources::ShellyPlug { .. } => SourceKind::ShellyPlug,
+            Sources::Oscilloscope { .. } => SourceKind::Oscilloscope,
+            Sources::UsbOscilloscope { .. } => SourceKind::UsbOscilloscope,
+        }
     }
 }
 
@@ -344,40 +363,16 @@ fn main() -> Result<()> {
         return Err(anyhow!("Path {} is not a directory", path.display()));
     }
 
-    // check if defined sources are valid
-    let mut jetson_count = 0;
-    let mut firmware_count = 0;
-    let mut shelly_plug_count = 0;
-    let mut oscilloscope_count = 0;
-    let mut usb_oscilloscope_count = 0;
-    let mut hailo_rt_count = 0;
-    let mut nvidia_gpu_count = 0;
+    // check if defined sources are valid - at most one source per kind
+    let mut seen_kinds = HashSet::new();
     for source in &args.sources {
-        if Jetson::try_from(source.clone()).is_ok() {
-            jetson_count += 1;
-        } else if Firmware::try_from(source.clone()).is_ok() {
-            firmware_count += 1;
-        } else if ShellyPlug::try_from(source.clone()).is_ok() {
-            shelly_plug_count += 1;
-        } else if Oscilloscope::try_from(source.clone()).is_ok() {
-            oscilloscope_count += 1;
-        } else if UsbOscilloscope::try_from(source.clone()).is_ok() {
-            usb_oscilloscope_count += 1;
-        } else if HailoRT::try_from(source.clone()).is_ok() {
-            hailo_rt_count += 1;
-        } else if NVGPU::try_from(source.clone()).is_ok() {
-            nvidia_gpu_count += 1;
+        if !seen_kinds.insert(source.kind()) {
+            return Err(anyhow!("The proposed measurement configuration is currently not possible"));
         }
     }
-    if jetson_count > 1
-        || firmware_count > 1
-        || shelly_plug_count > 1
-        || oscilloscope_count > 1
-        || usb_oscilloscope_count > 1
-        || hailo_rt_count > 1
-        || nvidia_gpu_count > 1
-    {
-        return Err(anyhow!("The proposed measurement configuration is currently not possible"));
+
+    if args.sources.is_empty() {
+        return Err(anyhow!("No sources defined"));
     }
 
     // start data acquisition

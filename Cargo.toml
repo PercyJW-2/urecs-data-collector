@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 bpaf = { version = "0.9.20", features = ["derive", "autocomplete", "bright-color"] }
 quick-xml = { version = "0.41.0", features = ["serialize"] }
-subenum = "1.1.2"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 anyhow = "1.0.98"
 serde = { version = "1.0.219", features = ["derive"] }
