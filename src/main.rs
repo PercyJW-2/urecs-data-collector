@@ -1,5 +1,6 @@
 mod network_firmware;
 mod network_firmware_fast;
+mod network;
 mod network_jetson;
 mod network_shelly_plug;
 mod utils;
