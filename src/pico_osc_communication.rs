@@ -146,10 +146,10 @@ impl USBInstrumentWrapper {
                 (PicoRange::X1_PROBE_100MV, -0.1)
             }
             (OscilloscopeMsmtType::INA225NVGPU, OscilloscopeProbeFactor::X1) => {
-                (PicoRange::X1_PROBE_5V, -5.0)
+                (PicoRange::X1_PROBE_500MV, -0.5)
             }
             (OscilloscopeMsmtType::INA225NVGPU, OscilloscopeProbeFactor::X10) => {
-                (PicoRange::X1_PROBE_500MV, -0.5)
+                (PicoRange::X1_PROBE_50MV, -0.05)
             }
         };
         let (channel_b_range, channel_b_offset) = match (voltage_probe_factor, msmt_environment) {
@@ -158,7 +158,7 @@ impl USBInstrumentWrapper {
             (OscilloscopeProbeFactor::X1, MsmtEnvironment::M2) => (PicoRange::X1_PROBE_2V, -2.0),
             (OscilloscopeProbeFactor::X10, MsmtEnvironment::M2) => (PicoRange::X1_PROBE_200MV, -0.2),
             (OscilloscopeProbeFactor::X1, MsmtEnvironment::TriggerChannel) => (PicoRange::X1_PROBE_2V, -2.0),
-            (OscilloscopeProbeFactor::X10, MsmtEnvironment::TriggerChannel) => (PicoRange::X1_PROBE_10V, -0.2),
+            (OscilloscopeProbeFactor::X10, MsmtEnvironment::TriggerChannel) => (PicoRange::X1_PROBE_200MV, -0.2),
             (OscilloscopeProbeFactor::X1, MsmtEnvironment::NvidiaGPU) => (PicoRange::X1_PROBE_10V, -10.0),
             (OscilloscopeProbeFactor::X10, MsmtEnvironment::NvidiaGPU) => (PicoRange::X1_PROBE_1V, -1.0),
         };
