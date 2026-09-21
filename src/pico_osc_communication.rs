@@ -40,6 +40,7 @@ pub(crate) fn get_data_from_usb_osc(
             MsmtEnvironment::Jetson => 15.0,
             MsmtEnvironment::M2 => 2.0,
             MsmtEnvironment::TriggerChannel => 2.0,
+            MsmtEnvironment::NvidiaGPU => 10.0,
         },
         current_channel_probe_factor.clone(),
         voltage_channel_probe_factor.clone(),
@@ -144,6 +145,12 @@ impl USBInstrumentWrapper {
             (OscilloscopeMsmtType::INA225, OscilloscopeProbeFactor::X10) => {
                 (PicoRange::X1_PROBE_100MV, -0.1)
             }
+            (OscilloscopeMsmtType::INA225NVGPU, OscilloscopeProbeFactor::X1) => {
+                (PicoRange::X1_PROBE_5V, -5.0)
+            }
+            (OscilloscopeMsmtType::INA225NVGPU, OscilloscopeProbeFactor::X10) => {
+                (PicoRange::X1_PROBE_500MV, -0.5)
+            }
         };
         let (channel_b_range, channel_b_offset) = match (voltage_probe_factor, msmt_environment) {
             (OscilloscopeProbeFactor::X1, MsmtEnvironment::Jetson) => (PicoRange::X1_PROBE_10V, -15.0),
@@ -152,6 +159,8 @@ impl USBInstrumentWrapper {
             (OscilloscopeProbeFactor::X10, MsmtEnvironment::M2) => (PicoRange::X1_PROBE_200MV, -0.2),
             (OscilloscopeProbeFactor::X1, MsmtEnvironment::TriggerChannel) => (PicoRange::X1_PROBE_2V, -2.0),
             (OscilloscopeProbeFactor::X10, MsmtEnvironment::TriggerChannel) => (PicoRange::X1_PROBE_10V, -0.2),
+            (OscilloscopeProbeFactor::X1, MsmtEnvironment::NvidiaGPU) => (PicoRange::X1_PROBE_10V, -10.0),
+            (OscilloscopeProbeFactor::X10, MsmtEnvironment::NvidiaGPU) => (PicoRange::X1_PROBE_1V, -1.0),
         };
         stream_device.enable_channel(
             PicoChannel::A,
@@ -217,6 +226,7 @@ impl ParquetHandler {
             OscilloscopeMsmtType::CurrentRanger => (1., 2.),
             OscilloscopeMsmtType::UCurrent => (10., 0.2),
             OscilloscopeMsmtType::INA225 => (1.0, 1.),
+            OscilloscopeMsmtType::INA225NVGPU => (1., 5.),
         };
         Ok(Self {
             parquet_writer: Mutex::new(wtr),

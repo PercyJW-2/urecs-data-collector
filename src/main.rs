@@ -41,6 +41,7 @@ pub(crate) enum OscilloscopeMsmtType {
     UCurrent,
     CurrentRanger,
     INA225,
+    INA225NVGPU,
 }
 
 impl FromStr for OscilloscopeMsmtType {
@@ -51,6 +52,7 @@ impl FromStr for OscilloscopeMsmtType {
             "ucurrent" => Ok(OscilloscopeMsmtType::UCurrent),
             "currentranger" => Ok(OscilloscopeMsmtType::CurrentRanger),
             "ina225" => Ok(OscilloscopeMsmtType::INA225),
+            "ina225nvgpu" => Ok(OscilloscopeMsmtType::INA225NVGPU),
             _ => Err(format!("Unknown OscilloscopeMsmtType: {}", s)),
         }
     }
@@ -62,6 +64,7 @@ impl Display for OscilloscopeMsmtType {
             Self::UCurrent => write!(f, "UCurrent"),
             Self::CurrentRanger => write!(f, "CurrentRanger"),
             Self::INA225 => write!(f, "INA225"),
+            Self::INA225NVGPU => write!(f, "INA225NVGPU"),
         }
     }
 }
@@ -71,6 +74,7 @@ pub(crate) enum MsmtEnvironment {
     Jetson,
     M2,
     TriggerChannel,
+    NvidiaGPU
 }
 
 impl FromStr for MsmtEnvironment {
@@ -81,6 +85,7 @@ impl FromStr for MsmtEnvironment {
             "jetson" => Ok(Self::Jetson),
             "m.2" => Ok(Self::M2),
             "triggerchannel" => Ok(Self::TriggerChannel),
+            "nvidiagpu" => Ok(Self::NvidiaGPU),
             _ => Err(format!("Unknown MsmtEnvironment: {}", s)),
         }
     }
@@ -92,6 +97,7 @@ impl Display for MsmtEnvironment {
             Self::Jetson => write!(f, "Jetson"),
             Self::M2 => write!(f, "M.2"),
             Self::TriggerChannel => write!(f, "TriggerChannel"),
+            Self::NvidiaGPU => write!(f, "NvidiaGPU"),
         }
     }
 }
