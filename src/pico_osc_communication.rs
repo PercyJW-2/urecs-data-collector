@@ -226,7 +226,7 @@ impl ParquetHandler {
             OscilloscopeMsmtType::CurrentRanger => (1., 2.),
             OscilloscopeMsmtType::UCurrent => (10., 0.2),
             OscilloscopeMsmtType::INA225 => (1.0, 1.),
-            OscilloscopeMsmtType::INA225NVGPU => (1., 5.),
+            OscilloscopeMsmtType::INA225NVGPU => (1., 0.5),
         };
         Ok(Self {
             parquet_writer: Mutex::new(wtr),
