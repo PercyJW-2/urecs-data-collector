@@ -85,7 +85,7 @@ impl FromStr for MsmtEnvironment {
             "jetson" => Ok(Self::Jetson),
             "m.2" => Ok(Self::M2),
             "triggerchannel" => Ok(Self::TriggerChannel),
-            "nvidiagpu" => Ok(Self::NvidiaGPU),
+            "nvidiagpu" | "nvgpu" => Ok(Self::NvidiaGPU),
             _ => Err(format!("Unknown MsmtEnvironment: {}", s)),
         }
     }
