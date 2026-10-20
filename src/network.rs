@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
+use log::{error, info};
 use parquet::arrow::ArrowWriter;
 
 use crate::{DataThread, DataThreadReturnVal, PARQUET_BATCH_ROW_COUNT, ShutdownFn};
@@ -50,8 +51,8 @@ pub(crate) fn get_data_from_network<D: NetworkData>(
         socket.send(b"go\n")?;
         while running.load(Ordering::Relaxed) {
             let len = match socket.recv(&mut buf) {
-                Ok(length) if length > 0 && buf[length - 1] == b'\n' => length,
-                Ok(_) => continue,
+                Ok(length) if length > 0 && let Some(pos) = String::from_utf8_lossy(&buf[..length]).find('\n') => pos,
+                Ok(_) => {error!("Invalid message"); continue},
                 Err(err) if matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
                     continue;
                 }
